@@ -19,6 +19,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import * as React from 'react';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { AdultToggle } from '../components/AdultToggle';
+import { setActiveDict } from '../lib/i18n';
+
+(globalThis as { React?: unknown }).React = React;
+setActiveDict({});
 
 const ROOT = join(__dirname, '..');
 const read = (p: string) => readFileSync(join(ROOT, p), 'utf8');
@@ -30,11 +39,26 @@ test('the reveal chip stays on screen while the reveal is on', () => {
   // Reintroduce by writing `const showAdultChip = (sourcesData?.hiddenAdult ?? 0) > 0;`: the first
   // assertion fails, because with the reveal on the server hides nothing and the chip would disappear.
   const page = code(read('app/discover/page.tsx'));
-  assert.match(page, /const showAdultChip = adultOn \|\| \(sourcesData\?\.hiddenAdult \?\? 0\) > 0;/,
+  assert.match(page, /const showAdultChip = sourcesData\?\.canRevealAdult \?\? \(adultOn \|\| \(sourcesData\?\.hiddenAdult \?\? 0\) > 0\);/,
     'the chip no longer stays mounted while the reveal is on, so pressing it strands the session');
   assert.match(page, /const adultOn = useAdultShown\(\);/, 'the page no longer knows whether the reveal is on');
-  assert.match(page, /api<\{ content: Src\[\]; hiddenAdult\?: number \}>\('\/api\/sources'\)/,
+  assert.match(page, /api<\{ content: Src\[\]; hiddenAdult\?: number; canRevealAdult\?: boolean \}>\('\/api\/sources'\)/,
     'the /api/sources type no longer carries hiddenAdult, so the chip has nothing to appear for');
+});
+
+test('a mixed-content source needs no adult provider or library to offer the reveal', () => {
+  for (const canRevealAdult of [true, false]) {
+    const client = new QueryClient();
+    client.setQueryData(['libraries'], []);
+    try {
+      const html = renderToStaticMarkup(createElement(QueryClientProvider, { client },
+        createElement(AdultToggle, { alsoWhen: canRevealAdult })));
+      if (canRevealAdult) {
+        assert.match(html, /Show 18\+/);
+        assert.match(html, /aria-pressed="false"/, 'showing the control must not turn the reveal on');
+      } else assert.equal(html, '', 'a capped account gets no reveal control');
+    } finally { client.clear(); }
+  }
 });
 
 test('the chip is anchored where a search cannot unmount it', () => {

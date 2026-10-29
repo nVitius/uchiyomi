@@ -2523,6 +2523,9 @@ export default async function sourceRoutes(app: FastifyInstance) {
        * capped account cannot learn from a number what it is not allowed to be told by name.
        */
       hiddenAdult: mayReach.length - show.length,
+      // A mixed-content source can return adult-rated titles without being an adult provider itself.
+      // This is account capability, independent of the current reveal and hidden-source count.
+      canRevealAdult: !cappedBelowAdult(req),
       // An adult source is not merely hidden from the wall: it never appears in the list the client fans out
       // over, so a capped account cannot learn its id here and then ask for it directly. `surfaceable` adds
       // the reveal chip's own hide on top of that cap (#64) -- see its comment for why the two are separate.

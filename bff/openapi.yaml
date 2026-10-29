@@ -3201,7 +3201,7 @@ paths:
       responses:
         "200":
           description: >-
-            { content: [Source], hiddenAdult }. Only the fields added in v0.33.0 and v0.42.0 are described
+            { content: [Source], hiddenAdult, canRevealAdult }. The additional catalogue fields are described
             here; the rest of the shape is the registry entry (id, name, lang, latest, popular, used,
             status, blockedUntil, note). Since v0.49.1 `noteCode` is the diagnosis code whose sentence `note` is
             (a reason belongs to its code), so a client can say it in its reader's language; null with `note`.
@@ -3210,15 +3210,19 @@ paths:
               schema:
                 type: object
                 properties:
+                  canRevealAdult:
+                    type: boolean
+                    description: >-
+                      Whether this account may reveal adult content. False for accounts capped below 18;
+                      independent of adult=1, the hidden-source count, and the presence of an adult library.
+                      Mixed-content sources can have adult-rated titles even when hiddenAdult is 0.
                   hiddenAdult:
                     type: integer
                     description: >-
                       How many sources the caller may reach but is not being shown right now, i.e. the adult
                       ones `adult=1` would add back. 0 with `adult=1`, and 0 for an account capped below 18,
                       which never had those sources to hide and is deliberately not told the number. Discover
-                      renders the "Show 18+" chip when this is above 0 (or when the reveal is already on, or
-                      when the account holds an 18+ library), so an install with adult providers and no adult
-                      shelf still has a way to ask for them back.
+                      uses canRevealAdult to offer the reveal even when no whole adult source is hidden.
                   content:
                     type: array
                     items:

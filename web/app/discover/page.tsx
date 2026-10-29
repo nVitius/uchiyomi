@@ -162,8 +162,8 @@ function DiscoverInner() {
     queryKey: ['sources'],
     // `hiddenAdult` is how many adult providers the "Show 18+" reveal is keeping out of `content` right now
     // (v0.42.0). Optional, so an older server's answer still renders; 0 for an age-capped account, which
-    // never had those sources to hide. It is the only reason the reveal chip appears on this page.
-    queryFn: () => api<{ content: Src[]; hiddenAdult?: number }>('/api/sources'),
+    // never had those sources to hide. canRevealAdult also covers rated titles within mixed-content sources.
+    queryFn: () => api<{ content: Src[]; hiddenAdult?: number; canRevealAdult?: boolean }>('/api/sources'),
     enabled: mayAdd,
     staleTime: 30_000,
     refetchInterval: 60_000,
@@ -171,14 +171,15 @@ function DiscoverInner() {
   // Never a backup extension's (v0.82.0, lib/sourceGroups.ts discoverSources): only the sources a person added.
   const sources = useMemo(() => discoverSources(sourcesData?.content ?? []), [sourcesData]);
   /**
-   * Whether to offer the reveal chip here at all.
+   * The server says whether this account can reveal adult-rated titles, even with no adult providers.
+   * An explicit false wins over a reveal left on by a previous account. Older servers keep the legacy fallback.
    *
    * ⚠️ The `adultOn ||` is load-bearing, not defensive. With the reveal ON the server hides nothing, so
    * `hiddenAdult` is 0 — and a chip that vanishes the moment it is pressed strands the session with no way
    * back. `AdultToggle` still renders on its own wherever an 18+ library exists.
    */
   const adultOn = useAdultShown();
-  const showAdultChip = adultOn || (sourcesData?.hiddenAdult ?? 0) > 0;
+  const showAdultChip = sourcesData?.canRevealAdult ?? (adultOn || (sourcesData?.hiddenAdult ?? 0) > 0);
 
   const trendQ = useQuery({
     // NOT ['trending'] -- that key belongs to /api/trending, which is what the household is reading and is a

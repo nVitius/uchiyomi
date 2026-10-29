@@ -3102,8 +3102,9 @@ switched on. With the reveal off, such a source is left out of the provider list
 and popular walls answer nothing, and the search across all your sources does not even ask it, so no
 request goes to that site at all. The **Show 18+** button is on Discover too — beside *Newest from your
 sources*, where it stays while you search — and brings the lot back for the rest of the browser session.
-It appears there whenever something is being hidden, so an install with adult providers and no 18+ shelf
-still has the switch. Since v0.55.4 the search also leaves out 18+ titles from providers that are not 18+ themselves
+It is available to accounts allowed to see adult content even with only a mixed-content source such as MangaDex
+and no adult providers or 18+ library. Accounts limited below 18 do not get this control, and their age limit still
+applies. Since v0.55.4 the search also leaves out 18+ titles from providers that are not 18+ themselves
 while the reveal is off — a MangaDex title rated erotica, a result carrying one of the genres below — and with it on,
 its *Hide 18+* and *18+ only* chips (section 6) sort them out. Three things are deliberately left alone, because you named them yourself: opening a
 provider's own page for a title, adding it, and *Find missing chapters* on a series whose own source is
