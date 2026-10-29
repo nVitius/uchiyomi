@@ -26,11 +26,11 @@ export function repoAddError(e: unknown): string {
   try { j = JSON.parse((e as ApiError)?.body || '{}'); } catch { /* not JSON: the generic line below */ }
   const said = j.reason ? ` ${tr('The engine said: {reason}', { reason: j.reason })}` : '';
   switch (j.error) {
-    case 'bad_url': return tr('That doesn’t look like a repository address. It usually ends in index.min.json.');
-    case 'github_page': return tr('That is a GitHub page, not the repository itself. Paste the repository’s index.min.json link instead.');
+    case 'bad_url': return tr('That doesn’t look like a repository address. It usually ends in index.pb or index.min.json.');
+    case 'github_page': return tr('That is a GitHub page, not the repository itself. Paste the repository’s index.pb or index.min.json link instead.');
     case 'exists': return tr('That repository is already added.');
     case 'empty':
-      return tr('That address gave no extensions, so it was not kept. Check that it is the repository’s index.min.json link, not a web page — or it may only list extensions you already have.')
+      return tr('That address gave no extensions, so it was not kept. Check that it is the repository’s index.pb or index.min.json link, not a web page — or it may only list extensions you already have.')
         + said + (j.removed === false ? ` ${tr('It could not be taken back out — press Remove next to it.')}` : '');
     case 'engine_refused': return tr('The extension engine refused that address: {reason}', { reason: j.reason ?? '' });
     case 'unreachable': return tr('Could not reach the extension engine: {reason}', { reason: j.reason ?? '' });
@@ -76,7 +76,7 @@ export function RepoForm({ onAdded }: { onAdded?: () => void }) {
   return (
     <div className="space-y-2" data-repo-form>
       <div className="flex gap-2">
-        <input value={repoUrl} onChange={(e) => { setRepoUrl(e.target.value); setRepoError(null); }} placeholder="https://…/index.min.json"
+        <input value={repoUrl} onChange={(e) => { setRepoUrl(e.target.value); setRepoError(null); }} placeholder="https://…/index.pb"
           onKeyDown={(e) => { if (e.key === 'Enter') void addRepo(); }}
           aria-label={tr('Repository address')} autoCapitalize="none" autoCorrect="off" spellCheck={false} inputMode="url" dir="ltr"
           className="field min-w-0 max-w-none flex-1 font-mono text-[13px]" />
@@ -93,6 +93,7 @@ export function RepoForm({ onAdded }: { onAdded?: () => void }) {
         <p role="alert" className="text-[12px] leading-relaxed text-red-300">{repoError}</p>
       )}
       <p className="text-[12px] leading-relaxed text-fog-500">
+        {tr('Repositories can use index.pb or index.min.json.')} {' '}
         {tr('Paste the same address you added in Mihon ({path}); a repository’s “Add to Mihon” link works too.', { path: tr('More → Settings → Browse → Extension repos') })}
       </p>
     </div>

@@ -2,7 +2,7 @@
   "_meta": {
     "language": "ru",
     "note": "Machine-assisted translation, reviewed for tone but not by a native speaker. Corrections are very welcome: edit this file and open a pull request. Keys are the English source strings, so a missing entry falls back to English.",
-    "strings": 4360
+    "strings": 4361
   },
   "1 check found something": "1 проверка нашла проблему",
   "1 member": "1 участник",
@@ -1253,6 +1253,7 @@
   "Not installed yet — download it under Extensions": "Ещё не установлен — скачайте его в разделе «Расширения»",
   "Once it is running, add an extension repository here, then choose your extensions.": "Когда он запустится, добавьте здесь репозиторий расширений, а затем выберите расширения.",
   "Paste the same address you added in Mihon ({path}); a repository’s “Add to Mihon” link works too.": "Вставьте тот же адрес, что вы добавили в Mihon ({path}); ссылка «Add to Mihon» на странице репозитория тоже подойдёт.",
+  "Repositories can use index.pb or index.min.json.": "Репозитории могут использовать index.pb или index.min.json.",
   "Refresh": "Обновить",
   "Refreshed — 1 extension available": "Обновлено — доступно 1 расширение",
   "Refreshed — {n} extensions available": "Обновлено — доступно расширений: {n}",
@@ -1286,9 +1287,9 @@
   "Repository address": "Адрес репозитория",
   "Repository removed": "Репозиторий убран",
   "saved as {file}": "сохранён как {file}",
-  "That address gave no extensions, so it was not kept. Check that it is the repository’s index.min.json link, not a web page — or it may only list extensions you already have.": "По этому адресу не нашлось ни одного расширения, поэтому он не сохранён. Проверьте, что это ссылка на index.min.json репозитория, а не веб-страница, — или в нём только расширения, которые у вас уже есть.",
-  "That doesn’t look like a repository address. It usually ends in index.min.json.": "Это не похоже на адрес репозитория. Обычно он заканчивается на index.min.json.",
-  "That is a GitHub page, not the repository itself. Paste the repository’s index.min.json link instead.": "Это страница GitHub, а не сам репозиторий. Вставьте вместо неё ссылку на index.min.json репозитория.",
+  "That address gave no extensions, so it was not kept. Check that it is the repository’s index.pb or index.min.json link, not a web page — or it may only list extensions you already have.": "По этому адресу не нашлось ни одного расширения, поэтому он не сохранён. Проверьте, что это ссылка на index.pb или index.min.json репозитория, а не веб-страница, — или в нём только расширения, которые у вас уже есть.",
+  "That doesn’t look like a repository address. It usually ends in index.pb or index.min.json.": "Это не похоже на адрес репозитория. Обычно он заканчивается на index.pb или index.min.json.",
+  "That is a GitHub page, not the repository itself. Paste the repository’s index.pb or index.min.json link instead.": "Это страница GitHub, а не сам репозиторий. Вставьте вместо неё ссылку на index.pb или index.min.json репозитория.",
   "That repository is already added.": "Этот репозиторий уже добавлен.",
   "The engine said: {reason}": "Ответ движка: {reason}",
   "The extension engine refused that address: {reason}": "Движок расширений отклонил этот адрес: {reason}",

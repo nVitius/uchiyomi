@@ -566,7 +566,7 @@ async function main() {
     const state = { repos: [] };
     const xp = await sourcesPage(PROFILES.desk, state);
     await tabOn(xp, 'Sources&view=add');
-    const input = await xp.waitForSelector('[data-ext-first-run] input[placeholder="https://…/index.min.json"]', { timeout: 15000 });
+    const input = await xp.waitForSelector('[data-ext-first-run] [data-repo-form] input', { timeout: 15000 });
     await input.type(FIXTURE_REPO);
     await sleep(400);
     await cropOn(xp, 'crop-repo-empty', 'Add an extension repository');
@@ -595,7 +595,7 @@ async function main() {
   if (want('crop-repo-toast')) {
     const xp = await sourcesPage(PROFILES.desk, { repos: [] });
     await tabOn(xp, 'Sources&view=add');
-    const input = await xp.waitForSelector('[data-ext-first-run] input[placeholder="https://…/index.min.json"]', { timeout: 15000 });
+    const input = await xp.waitForSelector('[data-ext-first-run] [data-repo-form] input', { timeout: 15000 });
     await input.type(FIXTURE_REPO);
     await clickText(xp, '[data-ext-first-run] button', 'Add');
     // The card itself (components/Toast.tsx `data-notice`), not the capsule at the top it replaced: a selector
@@ -621,7 +621,7 @@ async function main() {
   if (want('phone-repo-empty') || want('phone-repo-added')) {
     const xp = await sourcesPage(PROFILES.phone, { repos: [] });
     await tabOn(xp, 'Sources&view=add');
-    const input = await xp.waitForSelector('[data-ext-first-run] input[placeholder="https://…/index.min.json"]', { timeout: 15000 });
+    const input = await xp.waitForSelector('[data-ext-first-run] [data-repo-form] input', { timeout: 15000 });
     await input.type(FIXTURE_REPO);
     // Out of the field, so it shows the address from its start: at 390 px the caret's end of it began "xample.org/…".
     await xp.evaluate(() => (document.activeElement instanceof HTMLElement) && document.activeElement.blur());

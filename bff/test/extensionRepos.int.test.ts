@@ -47,6 +47,7 @@ const USER = 'xr-admin';
 
 /** What "the internet" serves at each address: the store the engine makes of it, and the extensions it lists. */
 const NET: Record<string, { stored: string; exts: string[] }> = {
+  'https://example.org/modern/index.pb': { stored: 'https://example.org/modern/index.pb', exts: ['modern.one', 'modern.two'] },
   'https://example.org/a/index.min.json': { stored: 'https://example.org/a/repo.json', exts: ['a.one', 'a.two'] },
   'https://example.org/b/index.min.json': { stored: 'https://example.org/b/repo.json', exts: ['b.one'] },
   // c's folder also serves the full index.json, listing the same extension -- which the engine refuses
@@ -392,6 +393,41 @@ test('adding an extension repository', { skip }, async (t) => {
       assert.ok(eng.stores.includes(A_STORED));
       assert.ok(['a.one', 'a.two'].every((p) => eng.catalogue.find((e) => e.pkgName === p)?.obsolete === false), 'they get updates again');
       assert.ok((await monitorCopy()).includes(A_STORED));
+    });
+
+    await t.test('a protobuf index is added unchanged, persists, and deduplicates legacy spellings', async () => {
+      const url = 'https://example.org/modern/index.pb';
+      eng.writes = [];
+      const r = await add(url);
+      assert.equal(r.statusCode, 200, r.body);
+      assert.equal(r.json().url, url);
+      assert.equal(r.json().added, 2);
+      assert.equal(r.json().corrected, false);
+      assert.deepEqual(eng.writes, [['add', url]], 'only the protobuf URL reached the engine');
+      assert.ok(eng.stores.includes(url));
+      assert.ok((await monitorCopy()).includes(url), 'the repository survives an engine reset');
+      for (const same of [url, url.replace('index.pb', 'index.min.json'), url.replace('index.pb', 'repo.json')]) {
+        const duplicate = await add(same);
+        assert.equal(duplicate.statusCode, 409, duplicate.body);
+        assert.equal(duplicate.json().url, url);
+      }
+      assert.deepEqual(eng.writes, [['add', url]], 'duplicates must not change the engine');
+      const removed = await del(url);
+      assert.equal(removed.statusCode, 200, removed.body);
+      assert.ok(!eng.stores.includes(url));
+      assert.ok(!(await monitorCopy()).includes(url));
+    });
+
+    await t.test('an unreadable protobuf index reports the engine reason without trying legacy JSON', async () => {
+      const url = 'https://example.org/broken/index.pb';
+      eng.writes = [];
+      const r = await add(url);
+      assert.equal(r.statusCode, 422, r.body);
+      assert.equal(r.json().error, 'empty');
+      assert.equal(r.json().reason, 'HTTP error 404');
+      assert.match(r.json().message, /index\.pb or index\.min\.json/);
+      assert.deepEqual(eng.writes, [['add', url]]);
+      assert.ok(!eng.stores.includes(url));
     });
 
     await t.test('a remove against an engine that cannot be read writes nothing', async () => {

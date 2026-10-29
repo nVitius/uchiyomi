@@ -12,6 +12,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
+import * as React from 'react';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { RepoForm, repoAddError } from '../components/ExtensionRepos';
+import { setActiveDict } from '../lib/i18n';
+
+(globalThis as { React?: unknown }).React = React;
+setActiveDict({});
 
 const ROOT = join(__dirname, '..');
 const read = (p: string) => readFileSync(join(ROOT, p), 'utf8');
@@ -53,14 +62,35 @@ test('with no repository, the form stands on Browse itself, and a list with no s
 });
 
 test('the input asks for the address Mihon users have, and the help says where Mihon keeps it', () => {
-  // Reintroduce by putting back `placeholder="https://…/index.json"`: the first assertion fails.
-  assert.match(form, /placeholder="https:\/\/…\/index\.min\.json"/, 'the placeholder does not show the index.min.json shape');
+  assert.match(form, /placeholder="https:\/\/…\/index\.pb"/, 'the placeholder does not show the protobuf index shape');
   assert.doesNotMatch(form, /placeholder="https:\/\/…\/index\.json"/);
   assert.match(form, /tr\('Paste the same address you added in Mihon \(\{path\}\); a repository’s “Add to Mihon” link works too\.', \{ path: tr\('More → Settings → Browse → Extension repos'\) \}\)/, 'the help does not say where the address is in Mihon');
   // While the (slow) check runs, say so.
   assert.match(form, /\{addingRepo && \(\s*<p role="status" aria-live="polite"[^>]*>\s*\{tr\('Checking the repository — this can take up to a minute\.'\)\}/, 'no time hint while Checking');
   // An address reads left to right in Arabic too: an RTL field put "https://" at its end.
   assert.match(form, /inputMode="url" dir="ltr"/, 'the address field follows the page\'s direction');
+});
+
+test('the rendered repository form explains protobuf and legacy JSON without restricting the URL suffix', () => {
+  const client = new QueryClient();
+  try {
+    const html = renderToStaticMarkup(createElement(QueryClientProvider, { client }, createElement(RepoForm)));
+    assert.ok(html.includes('placeholder="https://…/index.pb"'));
+    assert.match(html, /Repositories can use index\.pb or index\.min\.json\./);
+    const input = html.match(/<input\b[^>]*>/)?.[0];
+    assert.ok(input, 'the repository address field is rendered');
+    assert.doesNotMatch(input, /\bpattern=/, 'HTML validation must not limit the address to JSON');
+  } finally {
+    client.clear();
+  }
+});
+
+test('repository refusals offer protobuf as well as legacy JSON and preserve the engine reason', () => {
+  for (const error of ['bad_url', 'github_page', 'empty']) {
+    const message = repoAddError({ body: JSON.stringify({ error, reason: 'HTTP error 404' }) });
+    assert.match(message, /index\.pb or index\.min\.json/, error);
+    if (error === 'empty') assert.match(message, /HTTP error 404/);
+  }
 });
 
 test('the toast says what the server said, in the viewer\'s language, and counts only this repository', () => {

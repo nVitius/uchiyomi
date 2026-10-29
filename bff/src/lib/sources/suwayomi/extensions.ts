@@ -197,8 +197,8 @@ export type RepoInput =
 
 /** What the engine and the admin panel say for each refusal; the panel maps `error` to its own translation. */
 export const REPO_MESSAGES = {
-  bad_url: 'That doesn’t look like a repository address. It usually ends in index.min.json.',
-  github_page: 'That is a GitHub page, not the repository itself. Paste the repository’s index.min.json link instead.',
+  bad_url: 'That doesn’t look like a repository address. It usually ends in index.pb or index.min.json.',
+  github_page: 'That is a GitHub page, not the repository itself. Paste the repository’s index.pb or index.min.json link instead.',
 } as const;
 
 /** The longest address kept. The engine stores it in its settings and it is shown in the panel. */

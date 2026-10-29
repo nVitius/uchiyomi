@@ -69,10 +69,10 @@ It costs memory: **1 to 1.5 GB** once it has run a while, under a 2 GB ceiling
 file on the web. Mihon, Tachiyomi's forks and Uchiyomi all read the same format, so **the repository you use in
 Mihon is the one to add here**. Uchiyomi never suggests one: which repository you trust is your call.
 
-**What its address looks like.** It usually ends in **`index.min.json`**:
+**What its address looks like.** Modern repositories publish **`index.pb`**; legacy repositories use **`index.min.json`**:
 
 ```
-https://example.org/repo/index.min.json
+https://example.org/repo/index.pb
 ```
 
 (`example.org` stands in for the real host.) **Where to find yours:**
@@ -80,7 +80,7 @@ https://example.org/repo/index.min.json
 - **In Mihon:** **More → Settings → Browse → Extension repos** lists the repositories you already added. Copy the
   address from there.
 - **On the repository's own page:** repositories publish their address, and many have an **Add to Mihon** button.
-  That button is a link like `mihon://add-repo?url=https://…/index.min.json` (or `tachiyomi://add-repo?url=…`).
+  That button is a link like `mihon://add-repo?url=https://…/index.pb` (or `tachiyomi://add-repo?url=…`).
   Uchiyomi understands those: copy the button's link (right-click → *Copy link*) and paste it as it is, and
   Uchiyomi takes the address out of it.
 
@@ -88,7 +88,7 @@ https://example.org/repo/index.min.json
 
 1. Open **Admin → Sources** (`/admin/?tab=Sources`) and its **Add sources**.
 2. With no repository yet, its **Extensions** part opens on **Add an extension repository**: a line on what a
-   repository is, and an address field (`https://…/index.min.json`). Later, the field is behind the repositories link
+   repository is, and an address field (`https://…/index.pb`). Later, the field is behind the repositories link
    in the line under the extensions' search (*1 repository*, *2 repositories*).
 
    ![Add sources on a first visit: Add an extension repository, the address field with https://example.org/repo/index.min.json typed in, and the Add button](shots/crop-repo-empty.webp)
@@ -117,13 +117,15 @@ On the desktop app the engine restarts each time the app starts.
 
 | Paste | Uchiyomi |
 |---|---|
-| `https://…/index.min.json` | the address as it is |
+| `https://…/index.pb` | the compressed protobuf index, as it is; no JSON conversion is needed |
+| `https://…/index.json` | a modern JSON object index, as it is |
+| `https://…/index.min.json` | a legacy JSON list index |
 | an *Add to Mihon* link, `mihon://add-repo?url=…` or `tachiyomi://add-repo?url=…`, or a web link ending in `/add-repo?url=…` | takes out the address after `url=` |
 | an address without `https://` | adds `https://` |
-| a link to one file on GitHub, `…/blob/<branch>/index.min.json` | turns it into the raw file's address |
+| a link to one file on GitHub, `…/blob/<branch>/index.pb` or `…/blob/<branch>/index.min.json` | turns it into the raw file's address |
 | a GitHub **repository page** (`https://github.com/<owner>/<name>`) | refuses it: that is a web page, not the list itself |
 
-The extension engine reads a repository's list only from a file named `index.min.json`. So if an `index.json`
+For a **legacy JSON list**, the extension engine requires the filename `index.min.json`. If an `index.json`
 address gives nothing, Uchiyomi tries the `index.min.json` beside it once. If a folder address gives nothing, it
 tries `<folder>/index.min.json`. When the second address is the one that worked, the message adds *· saved as
 index.min.json*. An `index.min.json` that gives nothing is not retried at another address.

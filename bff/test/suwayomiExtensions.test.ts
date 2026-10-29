@@ -198,6 +198,35 @@ test('an add-repo link is unwrapped to the address inside it, whatever the app',
   assert.deepEqual(parseRepoInput('mihon://add-repo').ok, false);
 });
 
+test('protobuf repository links reach the engine as protobuf URLs', async () => {
+  const { parseRepoInput, addRepo, altRepoUrl } = await load();
+  const raw = 'https://raw.githubusercontent.com/owner/extensions/repo/index.pb';
+  for (const input of [
+    raw,
+    raw.replace('https://', ''),
+    'https://github.com/owner/extensions/blob/repo/index.pb',
+    'https://github.com/owner/extensions/raw/repo/index.pb',
+    'https://github.com/owner/extensions/raw/refs/heads/repo/index.pb',
+    'mihon://add-repo?url=' + encodeURIComponent(raw),
+    'tachiyomi://add-repo?url=' + encodeURIComponent(raw),
+  ]) {
+    const parsed = parseRepoInput(input);
+    assert.ok(parsed.ok, input);
+    const expected = input.includes('refs/heads') ? raw.replace('/repo/index.pb', '/refs/heads/repo/index.pb') : raw;
+    assert.equal(parsed.url, expected, input);
+    const seen: string[] = [];
+    assert.deepEqual(await addRepo(parsed.url,
+      answer({ addExtensionStore: { extensionStore: { indexUrl: expected, name: 'Example' } } }, seen)),
+    { indexUrl: expected, name: 'Example' });
+    assert.deepEqual(seen, ['mutation:' + JSON.stringify({ indexUrl: expected })]);
+    assert.equal(altRepoUrl(parsed.url), null, 'a protobuf index must not be rewritten as a legacy JSON index');
+  }
+  const withQuery = parseRepoInput(raw + '?v=2#top');
+  assert.ok(withQuery.ok);
+  assert.equal(withQuery.url, raw + '?v=2');
+  assert.equal(altRepoUrl(withQuery.url), null);
+});
+
 test('a missing scheme is added, and only http(s) is accepted', async () => {
   // Reintroduce by dropping the `https://` prefixing: "example.org/…" is refused as bad_url and the first
   // assertion fails.

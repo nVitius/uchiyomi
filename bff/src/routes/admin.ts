@@ -4217,7 +4217,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       await logAudit('extension.repo_add_refused', { userId: userIdOf(req), detail: { url: wanted, reason: reason ?? 'no extensions', removed }, req });
       return reply.code(422).send({
         error: 'empty',
-        message: 'That address gave no extensions, so it was not kept. Check that it is the repository’s index.min.json link, not a web page — or it may only list extensions you already have.'
+        message: 'That address gave no extensions, so it was not kept. Check that it is the repository’s index.pb or index.min.json link, not a web page — or it may only list extensions you already have.'
           + (reason ? ` The engine said: ${reason}` : '')
           + (removed ? '' : ' It could not be taken back out — press Remove next to it.'),
         reason, removed,

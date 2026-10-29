@@ -2276,7 +2276,7 @@ thousand of them. Uchiyomi ships none and has no repository built in, so the fir
 1. Open **Admin → Sources → Add sources**. With no repository yet, its **Extensions** part opens on *Add an
    extension repository*.
 2. Paste the address of an **extension repository** you trust — the same one you added in Mihon (Mihon: **More →
-   Settings → Browse → Extension repos**), usually ending in `index.min.json`. A repository's *Add to Mihon* link
+   Settings → Browse → Extension repos**), ending in `index.pb` or `index.min.json`. A repository's *Add to Mihon* link
    works too. Press **Add**; it can take up to a minute.
 3. **Added — {n} extensions from this repository.** Browse lists them, a page at a time: press **Install** on each
    one you want. Its sources switch on straight away, are listed under **Your sources** and are searchable from

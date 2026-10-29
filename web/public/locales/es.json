@@ -2,7 +2,7 @@
   "_meta": {
     "language": "es",
     "note": "Machine-assisted translation, reviewed for tone but not by a native speaker. Corrections are very welcome: edit this file and open a pull request. Keys are the English source strings, so a missing entry falls back to English.",
-    "strings": 4360
+    "strings": 4361
   },
   "1 check found something": "1 comprobación encontró algo",
   "1 member": "1 miembro",
@@ -1253,6 +1253,7 @@
   "Not installed yet — download it under Extensions": "Aún no instalado — descárgalo en Extensiones",
   "Once it is running, add an extension repository here, then choose your extensions.": "Cuando esté en marcha, añade aquí un repositorio de extensiones y luego elige tus extensiones.",
   "Paste the same address you added in Mihon ({path}); a repository’s “Add to Mihon” link works too.": "Pega la misma dirección que añadiste en Mihon ({path}); el enlace “Add to Mihon” de un repositorio también sirve.",
+  "Repositories can use index.pb or index.min.json.": "Los repositorios pueden usar index.pb o index.min.json.",
   "Refresh": "Actualizar",
   "Refreshed — 1 extension available": "Actualizado — 1 extensión disponible",
   "Refreshed — {n} extensions available": "Actualizado — {n} extensiones disponibles",
@@ -1286,9 +1287,9 @@
   "Repository address": "Dirección del repositorio",
   "Repository removed": "Repositorio quitado",
   "saved as {file}": "guardado como {file}",
-  "That address gave no extensions, so it was not kept. Check that it is the repository’s index.min.json link, not a web page — or it may only list extensions you already have.": "Esa dirección no dio ninguna extensión, así que no se ha guardado. Comprueba que sea el enlace index.min.json del repositorio y no una página web — o puede que solo contenga extensiones que ya tienes.",
-  "That doesn’t look like a repository address. It usually ends in index.min.json.": "Eso no parece la dirección de un repositorio. Suele terminar en index.min.json.",
-  "That is a GitHub page, not the repository itself. Paste the repository’s index.min.json link instead.": "Eso es una página de GitHub, no el repositorio en sí. Pega en su lugar el enlace index.min.json del repositorio.",
+  "That address gave no extensions, so it was not kept. Check that it is the repository’s index.pb or index.min.json link, not a web page — or it may only list extensions you already have.": "Esa dirección no dio ninguna extensión, así que no se ha guardado. Comprueba que sea el enlace index.pb o index.min.json del repositorio y no una página web — o puede que solo contenga extensiones que ya tienes.",
+  "That doesn’t look like a repository address. It usually ends in index.pb or index.min.json.": "Eso no parece la dirección de un repositorio. Suele terminar en index.pb o index.min.json.",
+  "That is a GitHub page, not the repository itself. Paste the repository’s index.pb or index.min.json link instead.": "Eso es una página de GitHub, no el repositorio en sí. Pega en su lugar el enlace index.pb o index.min.json del repositorio.",
   "That repository is already added.": "Ese repositorio ya está añadido.",
   "The engine said: {reason}": "El motor dijo: {reason}",
   "The extension engine refused that address: {reason}": "El motor de extensiones rechazó esa dirección: {reason}",
