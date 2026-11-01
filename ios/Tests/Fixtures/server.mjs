@@ -34,6 +34,14 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.url === '/api/truncated') { res.writeHead(200, {'Content-Length': 100000}); res.write(Buffer.alloc(100)); setTimeout(() => res.destroy(), 30); return; }
   if (req.url === '/caught') stats.redirectHits++;
+  if (req.url === '/__server-down') { mode = 'server-down'; res.end('ok'); return; }
+  if (req.url === '/__incompatible') { mode = 'incompatible'; res.end('ok'); return; }
+  if (req.url === '/auth/config') {
+    if (req.headers.cookie || req.headers.authorization) { res.writeHead(400); res.end('Unexpected credentials'); return; }
+    if (mode === 'server-down') { res.writeHead(502, {'Content-Type': 'text/html'}); res.end('This App is Down'); return; }
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({mode: mode === 'incompatible' ? 'oidc-only' : 'local'})); return;
+  }
   if (req.url === '/__bad-hash') { mode = 'bad-hash'; res.end('ok'); return; }
   if (req.url === '/mobile-assets.json') {
     res.setHeader('Content-Type', 'application/json');

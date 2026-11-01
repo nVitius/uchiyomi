@@ -6,6 +6,24 @@ protocol CookieVault {
     func write(_ data: Data) throws
 }
 
+// Availability checks never read or mutate a saved account's cookies.
+private struct ProbeCookieVault: CookieVault {
+    func read() -> Data? { nil }
+    func write(_ data: Data) {}
+}
+
+extension ServerAvailability {
+    static func check(_ origin: URL) async -> Self {
+        do {
+            let client = try RemoteClient(origin: origin, vault: ProbeCookieVault(), resourceTimeout: 5)
+            defer { client.cancel() }
+            let reply = try await client.fetch("/auth/config", maxBytes: 64 * 1024, timeout: 5)
+            try ServerCompatibility.validate(reply)
+            return .available
+        } catch { return failure(error) }
+    }
+}
+
 struct KeychainCookieVault: CookieVault {
     let profileID: UUID
     private var query: [String: Any] {
@@ -91,10 +109,22 @@ private class NoRedirects: NSObject, URLSessionTaskDelegate {
 
 private final class BoundedDownload: NoRedirects, URLSessionDownloadDelegate {
     let limit: Int64
+    private let lock = NSLock()
+    private var failure: Error?
+    var validationError: Error? { lock.lock(); defer { lock.unlock() }; return failure }
     init(limit: Int, lifetime: RemoteSessionLifetime) { self.limit = Int64(limit); super.init(lifetime: lifetime) }
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {}
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        if totalBytesWritten > limit || totalBytesExpectedToWrite > limit { downloadTask.cancel() }
+        let error: Error?
+        if let response = downloadTask.response as? HTTPURLResponse, (500...599).contains(response.statusCode) {
+            error = ClientError.serverUnavailable(response.statusCode)
+        } else if totalBytesWritten > limit || totalBytesExpectedToWrite > limit {
+            error = ClientError.invalid("The server response exceeds the size limit.")
+        } else { error = nil }
+        if let error {
+            lock.lock(); failure = error; lock.unlock()
+            downloadTask.cancel()
+        }
     }
 }
 
@@ -105,7 +135,8 @@ final class RemoteClient {
     private let vault: CookieVault
     private let lifetime: RemoteSessionLifetime
 
-    init(origin: URL, vault: CookieVault, configuration: URLSessionConfiguration = .ephemeral) throws {
+    init(origin: URL, vault: CookieVault, configuration: URLSessionConfiguration = .ephemeral,
+         resourceTimeout: TimeInterval = 120) throws {
         self.origin = origin
         self.vault = vault
         // A new ephemeral configuration owns its own cookie store. Never use .shared.
@@ -114,7 +145,7 @@ final class RemoteClient {
         configuration.urlCache = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = 15
-        configuration.timeoutIntervalForResource = 120
+        configuration.timeoutIntervalForResource = resourceTimeout
         configuration.httpShouldSetCookies = true
         configuration.httpCookieAcceptPolicy = .always
         if let data = try vault.read(), let records = try PropertyListSerialization.propertyList(from: data, format: nil) as? [[String: Any]] {
@@ -173,10 +204,15 @@ final class RemoteClient {
         request.httpBody = body
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         // Download to a temporary file so a large/malformed response does not grow the app heap unbounded.
-        let (file, response) = try await session.download(for: request, delegate: BoundedDownload(limit: maxBytes, lifetime: lifetime))
+        let download = BoundedDownload(limit: maxBytes, lifetime: lifetime)
+        let file: URL, response: URLResponse
+        do { (file, response) = try await session.download(for: request, delegate: download) }
+        catch { throw download.validationError ?? error }
         defer { try? FileManager.default.removeItem(at: file) }
+        if let error = download.validationError { throw error }
         try persistCookies()
         let http = try validate(response)
+        try ClientError.checkAvailability(HTTPResponse(status: http.statusCode))
         let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? Int.max
         guard size <= maxBytes else { throw ClientError.invalid("The server response exceeds the size limit.") }
         return HTTPResponse(status: http.statusCode, headers: responseHeaders(http), body: try Data(contentsOf: file))

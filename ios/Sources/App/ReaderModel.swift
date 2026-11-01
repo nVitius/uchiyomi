@@ -14,6 +14,7 @@ final class ReaderModel: ObservableObject {
     @Published var awaitingConfirmation = false
     @Published var canRecover = false
     @Published var profiles: [ServerProfile] = []
+    @Published var serverStatuses: [UUID: ServerAvailability] = [:]
     @Published var selectedID: UUID?
     @Published var showingServers = false
     @Published var addingServer = false
@@ -28,15 +29,98 @@ final class ReaderModel: ObservableObject {
     private let root: URL
     private let assetClient: ((RemoteClient) -> any AssetFetching)?
     private let startupTimeout: UInt64
+    private let serverProbe: @Sendable (URL) async -> ServerAvailability
+    private let outageRetryInterval: UInt64
+    private var statusChecks: [UUID: UUID] = [:]
+    private var observedServerStatuses: [UUID: ServerAvailability] = [:]
+    private var outageProfileID: UUID?
+    private var outageMonitorTask: Task<Void, Never>?
+    private var foreground = true
     private lazy var store = ProfileStore(root: root)
     private var catalog = ProfileStore.Catalog()
 
     init(root: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Uchiyomi", isDirectory: true),
          startupTimeout: UInt64 = 30_000_000_000,
-         assetClient: ((RemoteClient) -> any AssetFetching)? = nil) {
+         assetClient: ((RemoteClient) -> any AssetFetching)? = nil,
+         outageRetryInterval: UInt64 = 30_000_000_000,
+         serverProbe: @escaping @Sendable (URL) async -> ServerAvailability = { await ServerAvailability.check($0) }) {
         self.root = root
         self.startupTimeout = startupTimeout
         self.assetClient = assetClient
+        self.serverProbe = serverProbe
+        self.outageRetryInterval = outageRetryInterval
+    }
+
+    private func setServerStatus(_ status: ServerAvailability, for id: UUID) {
+        statusChecks[id] = nil
+        serverStatuses[id] = status
+        if status != .checking { observedServerStatuses[id] = status }
+        if status == .available && outageProfileID == id { dismissStatus() }
+    }
+
+    func refreshServerStatuses() async {
+        await refreshServerStatuses(profiles)
+    }
+
+    private func refreshServerStatuses(_ targets: [ServerProfile]) async {
+        let pending = targets.map { ($0, UUID(), observedServerStatuses[$0.id] ?? .unknown) }
+        for (profile, token, _) in pending {
+            statusChecks[profile.id] = token
+            serverStatuses[profile.id] = .checking
+        }
+        defer {
+            // Leaving the page cancels its probes. Retain the previous observation;
+            // never overwrite a newer connection result or a removed profile.
+            for (profile, token, previous) in pending where statusChecks[profile.id] == token {
+                statusChecks[profile.id] = nil
+                serverStatuses[profile.id] = previous
+            }
+        }
+        let probe = serverProbe
+        await withTaskGroup(of: (UUID, UUID, ServerAvailability).self) { group in
+            for (profile, token, _) in pending {
+                group.addTask { (profile.id, token, await probe(profile.origin)) }
+            }
+            for await (id, token, result) in group {
+                guard !Task.isCancelled else { group.cancelAll(); break }
+                if statusChecks[id] == token && profiles.contains(where: { $0.id == id }) {
+                    setServerStatus(result, for: id)
+                }
+            }
+        }
+    }
+
+    func dismissStatus() {
+        status = nil
+        outageProfileID = nil
+        outageMonitorTask?.cancel(); outageMonitorTask = nil
+    }
+
+    func suspend() {
+        foreground = false
+        outageMonitorTask?.cancel(); outageMonitorTask = nil
+    }
+
+    private func startOutageMonitor(checkImmediately: Bool = false) {
+        guard foreground, outageProfileID != nil, webView != nil else { return }
+        outageMonitorTask?.cancel()
+        let interval = outageRetryInterval
+        outageMonitorTask = Task { [weak self] in
+            var immediate = checkImmediately
+            while !Task.isCancelled {
+                if !immediate {
+                    do { try await Task.sleep(nanoseconds: interval) } catch { return }
+                }
+                immediate = false
+                guard await self?.refreshOutageStatus() == true else { return }
+            }
+        }
+    }
+
+    private func refreshOutageStatus() async -> Bool {
+        guard foreground, let profile, outageProfileID == profile.id else { return false }
+        await refreshServerStatuses([profile])
+        return foreground && outageProfileID == profile.id
     }
 
     private func save(_ updated: ProfileStore.Catalog) throws {
@@ -71,6 +155,7 @@ final class ReaderModel: ObservableObject {
     @discardableResult
     private func stopReader() async -> Bool {
         readerID = UUID(); activeUI = nil
+        dismissStatus()
         startupTask?.cancel(); startupTask = nil
         weak var retired = webView
         webView?.stopLoading(); webView?.navigationDelegate = nil; webView?.uiDelegate = nil; webView = nil
@@ -100,6 +185,7 @@ final class ReaderModel: ObservableObject {
         defer { progress = nil; downloadProgress = nil }
         await stopReader()
         profile = selected; address = selected.origin.absoluteString
+        if checkForUpdates { setServerStatus(.checking, for: selected.id) }
         awaitingConfirmation = false
         let cache = AssetCache(root: store.directory(for: selected).appendingPathComponent("ui"))
         self.cache = cache
@@ -123,7 +209,11 @@ final class ReaderModel: ObservableObject {
                 }
             }
             let ui = launch.ui
-            if launch.updateFailed { status = "The update couldn’t be saved. Your saved version is ready to use." }
+            if let failure = launch.fallbackError {
+                status = ClientError.savedReaderMessage(failure)
+                if ClientError.isUnavailable(failure) { outageProfileID = selected.id }
+                setServerStatus(.failure(failure), for: selected.id)
+            } else if checkForUpdates { setServerStatus(.available, for: selected.id) }
             progress = "Opening your library…"
             let gateway = Gateway(profile: selected, ui: ui, client: remote)
             try await gateway.start()
@@ -143,6 +233,7 @@ final class ReaderModel: ObservableObject {
             addingServer = false; showingServers = false
             // Start at the web app's home page; its auth state handles offline fallback.
             view.load(URLRequest(url: selected.localOrigin))
+            startOutageMonitor()
             if pending && ui.manifest.startupCheckVersion == 1 {
                 startupTask = Task { [weak self, weak view] in
                     do { try await Task.sleep(nanoseconds: self?.startupTimeout ?? 30_000_000_000) } catch { return }
@@ -158,6 +249,7 @@ final class ReaderModel: ObservableObject {
             }
         } catch {
             await stopReader()
+            setServerStatus(.failure(error), for: selected.id)
             self.error = ClientError.connectionMessage(error)
         }
     }
@@ -226,15 +318,21 @@ final class ReaderModel: ObservableObject {
             updated.profiles.removeAll { $0.id == forgotten.id }
             if updated.selectedID == forgotten.id { updated.selectedID = nil }
             try save(updated)
+            statusChecks[forgotten.id] = nil
+            serverStatuses[forgotten.id] = nil
+            observedServerStatuses[forgotten.id] = nil
         } catch { self.error = "Could not finish removing this server. Retry to remove its remaining local data. \(error.localizedDescription)" }
     }
     func resume() async {
+        foreground = true
         guard !busy, let gateway else { return }
         let readerID = self.readerID
         do { try await gateway.start() } catch {
             guard self.readerID == readerID else { return }
             self.error = "Cannot restart the reader: \(error.localizedDescription)"
         }
+        guard self.readerID == readerID else { return }
+        startOutageMonitor(checkImmediately: true)
     }
     func reload() async {
         guard !busy, let view = webView else { return }

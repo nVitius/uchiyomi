@@ -69,7 +69,7 @@ actor AssetCache {
 
     struct LaunchResult {
         let ui: PreparedUI
-        let updateFailed: Bool
+        let fallbackError: Error?
     }
 
     /// Called only at startup/server selection, before a reader uses the generation.
@@ -79,22 +79,21 @@ actor AssetCache {
         if saved == nil || (checkForUpdates && (try? needsConfirmation()) == true && saved?.manifest.startupCheckVersion == 1) {
             if (try? previous()) != nil { saved = try rollback(rejectingCurrent: true) }
         }
-        if !checkForUpdates, let saved { return LaunchResult(ui: saved, updateFailed: false) }
+        if !checkForUpdates, let saved { return LaunchResult(ui: saved, fallbackError: nil) }
         do {
             let reply = try await client.assetResponse("/mobile-assets.json", maxBytes: 4 * 1024 * 1024)
             let manifest = try AssetManifest.decodeResponse(reply)
             let rejected = try? String(contentsOf: root.appendingPathComponent("rejected-build.txt"), encoding: .utf8)
             if let saved, manifest == saved.manifest || manifest.buildId == rejected {
-                return LaunchResult(ui: saved, updateFailed: false)
+                return LaunchResult(ui: saved, fallbackError: nil)
             }
             let ui = try await stage(client: client, progress: progress, initialResponse: reply)
             try activate(ui)
-            return LaunchResult(ui: ui, updateFailed: false)
+            return LaunchResult(ui: ui, fallbackError: nil)
         } catch {
-            if error is CancellationError { throw error }
+            if error is CancellationError || Task.isCancelled { throw error }
             guard let saved else { throw error }
-            // Ordinary offline startup is expected, so it does not need an update warning.
-            return LaunchResult(ui: saved, updateFailed: !(error is URLError))
+            return LaunchResult(ui: saved, fallbackError: error)
         }
     }
 
@@ -116,6 +115,7 @@ actor AssetCache {
         for (index, asset) in manifest.files.enumerated() {
             try Task.checkCancellation()
             let response = try await client.assetResponse(asset.path, maxBytes: asset.size)
+            try ClientError.checkAvailability(response)
             guard response.status == 200, response.body.count == asset.size, AssetManifest.digest(response.body) == asset.sha256 else {
                 throw ClientError.invalid("An app file changed during download. Retry when the server has finished updating.")
             }

@@ -21,9 +21,12 @@ final class ReaderLifecycleTests: XCTestCase {
         let cache = AssetCache(root: store.directory(for: profile).appendingPathComponent("ui"))
         let ui = try await cache.prepare(client: ReaderFixture()) { _, _ in }
         try await cache.confirm(ui)
-        var model = ReaderModel(root: root)
+        var model = ReaderModel(root: root, assetClient: { _ in UnavailableReaderFixture() })
         do {
             await model.restore()
+            XCTAssertNil(model.error)
+            XCTAssertEqual(model.status, "Server unavailable. You’re using the saved offline reader.")
+            XCTAssertEqual(model.serverStatuses[profile.id], .unavailable)
             try await waitForPath(model, "/")
             model.webView?.load(URLRequest(url: URL(string: "/reader/?book=fixture-1", relativeTo: profile.localOrigin)!.absoluteURL))
             try await waitForPath(model, "/reader/")
@@ -33,7 +36,7 @@ final class ReaderLifecycleTests: XCTestCase {
             // Release the view/listener and create a new model from persisted state,
             // as a process restart does. A previous reader URL must not be restored.
             await model.addServer()
-            model = ReaderModel(root: root)
+            model = ReaderModel(root: root, assetClient: { _ in UnavailableReaderFixture() })
             await model.restore()
             try await waitForPath(model, "/")
             XCTAssertEqual(model.selectedID, profile.id)
@@ -48,6 +51,134 @@ final class ReaderLifecycleTests: XCTestCase {
         }
         await model.addServer()
         try KeychainCookieVault(profileID: profile.id).remove()
+        try await removeFixtureStore(profile.id)
+        try FileManager.default.removeItem(at: root)
+    }
+
+    func testServerAvailabilityChecksRefreshAndIgnoreCancelledOrRemovedProfiles() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = ProfileStore(root: root)
+        let first = try store.profile(for: URL(string: "https://available.example")!, in: .init())
+        let second = try store.profile(for: URL(string: "https://unavailable.example")!, in: .init(profiles: [first]))
+        try store.save(.init(profiles: [first, second], selectedID: nil))
+        let probe = AvailabilityProbeFixture()
+        let model = ReaderModel(root: root, serverProbe: { await probe.check($0) })
+        await model.restore()
+        func waitForProbes(_ count: Int = 2) async throws {
+            for _ in 0..<100 {
+                if await probe.count == count { return }
+                try await Task.sleep(nanoseconds: 10_000_000)
+            }
+            XCTFail("Availability checks did not start")
+        }
+        let check = Task { await model.refreshServerStatuses() }
+        try await waitForProbes()
+        XCTAssertEqual(model.serverStatuses[first.id], .checking)
+        XCTAssertEqual(model.serverStatuses[second.id], .checking)
+        await probe.complete(first.origin, with: .available)
+        await probe.complete(second.origin, with: .unavailable)
+        await check.value
+        XCTAssertEqual(model.serverStatuses[first.id], .available)
+        XCTAssertEqual(model.serverStatuses[second.id], .unavailable)
+
+        // A newer refresh must restore the last completed observation if cancelled,
+        // even when it replaced a refresh that was already showing "Checking".
+        let older = Task { await model.refreshServerStatuses() }
+        try await waitForProbes()
+        let newer = Task { await model.refreshServerStatuses() }
+        try await waitForProbes(4)
+        await probe.complete(first.origin, with: .unavailable)
+        await probe.complete(second.origin, with: .available)
+        await older.value
+        XCTAssertEqual(model.serverStatuses[first.id], .checking)
+        newer.cancel()
+        await probe.complete(first.origin, with: .unavailable)
+        await probe.complete(second.origin, with: .available)
+        await newer.value
+        XCTAssertEqual(model.serverStatuses[first.id], .available)
+        XCTAssertEqual(model.serverStatuses[second.id], .unavailable)
+
+        let cancelled = Task { await model.refreshServerStatuses() }
+        try await waitForProbes()
+        cancelled.cancel()
+        await probe.complete(first.origin, with: .unavailable)
+        await probe.complete(second.origin, with: .available)
+        await cancelled.value
+        XCTAssertEqual(model.serverStatuses[first.id], .available)
+        XCTAssertEqual(model.serverStatuses[second.id], .unavailable)
+
+        let removed = Task { await model.refreshServerStatuses() }
+        try await waitForProbes()
+        await model.forget(second)
+        XCTAssertNil(model.error)
+        await probe.complete(first.origin, with: .available)
+        await probe.complete(second.origin, with: .available)
+        await removed.value
+        XCTAssertNil(model.serverStatuses[second.id])
+        XCTAssertEqual(model.profiles, [first])
+        try FileManager.default.removeItem(at: root)
+    }
+
+    func testRecoveredOutageClearsOnResumeAndWhileReadingWithoutReload() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = ProfileStore(root: root)
+        let profile = try store.profile(for: URL(string: "https://127.0.0.1:9")!, in: .init())
+        try store.save(.init(profiles: [profile], selectedID: profile.id))
+        let cache = AssetCache(root: store.directory(for: profile).appendingPathComponent("ui"))
+        let ui = try await cache.prepare(client: ReaderFixture()) { _, _ in }
+        try await cache.confirm(ui)
+        let probe = RecoveryProbeFixture()
+        let model = ReaderModel(root: root, assetClient: { _ in UnavailableReaderFixture() },
+                                outageRetryInterval: 50_000_000, serverProbe: { _ in await probe.check() })
+        func waitForRecovery() async throws {
+            for _ in 0..<100 {
+                if model.status == nil { return }
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+            XCTFail("Recovered server left its outage notice visible")
+        }
+        do {
+            await model.restore()
+            model.suspend()
+            XCTAssertNotNil(model.status)
+            model.webView?.load(URLRequest(url: URL(string: "/reader/?book=fixture-1", relativeTo: profile.localOrigin)!.absoluteURL))
+            try await waitForPath(model, "/reader/")
+            let identity = ObjectIdentifier(try XCTUnwrap(model.webView))
+            _ = try await model.webView?.evaluateJavaScript("window.retainedPage = 42")
+            await probe.recover()
+            try await Task.sleep(nanoseconds: 150_000_000)
+            XCTAssertNotNil(model.status, "Background app must not keep polling")
+            await model.resume()
+            try await waitForRecovery()
+            XCTAssertEqual(model.serverStatuses[profile.id], .available)
+            XCTAssertEqual(ObjectIdentifier(try XCTUnwrap(model.webView)), identity)
+            try await waitForPath(model, "/reader/")
+            let retained = try await model.webView?.evaluateJavaScript("window.retainedPage") as? Int
+            XCTAssertEqual(retained, 42, "Recovery check must not reload the reader")
+
+            // An outage that recovers while the reader stays open also clears itself.
+            await model.choose(profile)
+            XCTAssertNotNil(model.status)
+            try await waitForRecovery()
+            XCTAssertEqual(model.serverStatuses[profile.id], .available)
+            // Availability must not erase unrelated update/storage feedback.
+            model.status = "Not enough storage to save the update."
+            await model.refreshServerStatuses()
+            XCTAssertEqual(model.status, "Not enough storage to save the update.")
+
+            await model.choose(profile)
+            model.dismissStatus()
+            let count = await probe.count
+            try await Task.sleep(nanoseconds: 150_000_000)
+            let afterDismissal = await probe.count
+            XCTAssertEqual(afterDismissal, count, "Dismissed outage must stop retrying")
+        } catch {
+            await model.addServer()
+            try? await removeFixtureStore(profile.id)
+            try? FileManager.default.removeItem(at: root)
+            throw error
+        }
+        await model.addServer()
         try await removeFixtureStore(profile.id)
         try FileManager.default.removeItem(at: root)
     }
@@ -152,6 +283,34 @@ final class ReaderLifecycleTests: XCTestCase {
             try await removeFixtureStore(profile.id)
         }
         try FileManager.default.removeItem(at: root)
+    }
+}
+
+private actor AvailabilityProbeFixture {
+    private var pending: [URL: [CheckedContinuation<ServerAvailability, Never>]] = [:]
+    var count: Int { pending.values.reduce(0) { $0 + $1.count } }
+    func check(_ origin: URL) async -> ServerAvailability {
+        await withCheckedContinuation { pending[origin, default: []].append($0) }
+    }
+    func complete(_ origin: URL, with result: ServerAvailability) {
+        guard pending[origin]?.isEmpty == false else { return }
+        pending[origin]?.removeFirst().resume(returning: result)
+    }
+}
+
+private actor RecoveryProbeFixture {
+    private var available = false
+    private(set) var count = 0
+    func recover() { available = true }
+    func check() -> ServerAvailability {
+        count += 1
+        return available ? .available : .unavailable
+    }
+}
+
+private struct UnavailableReaderFixture: AssetFetching {
+    func assetResponse(_ path: String, maxBytes: Int) async throws -> HTTPResponse {
+        HTTPResponse(status: 502, headers: ["Content-Type": "text/html"], body: Data("This App is Down".utf8))
     }
 }
 

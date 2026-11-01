@@ -14,6 +14,7 @@ struct UchiyomiApp: App {
                 }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active { Task { await model.resume() } }
+                    else { model.suspend() }
                 }
         }
     }
@@ -105,7 +106,7 @@ struct ReaderView: View {
                         if let status = model.status {
                             HStack {
                                 Text(status).font(.footnote)
-                                Button("Dismiss") { model.status = nil }.font(.footnote)
+                                Button("Dismiss") { model.dismissStatus() }.font(.footnote)
                             }
                         }
                         if let error = model.error {
@@ -173,6 +174,7 @@ struct ServerManagementView: View {
                                     Text(profile.origin.host ?? "Uchiyomi").font(.headline).foregroundStyle(ReaderTheme.foreground)
                                     Text(profile.origin.absoluteString).font(.caption).foregroundStyle(ReaderTheme.muted)
                                         .lineLimit(2).multilineTextAlignment(.leading)
+                                    ServerStatusView(status: model.serverStatuses[profile.id] ?? .unknown)
                                 }
                                 Spacer(minLength: 0)
                                 Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(ReaderTheme.muted)
@@ -196,12 +198,39 @@ struct ServerManagementView: View {
         }
         .background { ReaderBackground() }
         .navigationTitle("Servers").navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
+        .task { await model.refreshServerStatuses() }
+        .refreshable { await model.refreshServerStatuses() }
         .confirmationDialog("Remove this server from this device?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible, presenting: removing) { profile in
             Button("Remove server", role: .destructive) { Task { await model.forget(profile) } }
             Button("Cancel", role: .cancel) {}
         } message: { profile in
             Text("This removes the saved session, downloads, and unsynced progress for \(profile.origin.absoluteString) from this device. The server library is kept.")
         }
+    }
+}
+
+private struct ServerStatusView: View {
+    let status: ServerAvailability
+    private var symbol: String {
+        switch status {
+        case .unknown: return "circle.dotted"
+        case .checking: return "arrow.triangle.2.circlepath"
+        case .available: return "checkmark.circle.fill"
+        case .unavailable: return "wifi.slash"
+        case .needsAttention: return "exclamationmark.circle.fill"
+        }
+    }
+    private var color: Color {
+        switch status {
+        case .available: return .green
+        case .unavailable, .needsAttention: return .orange
+        case .unknown, .checking: return ReaderTheme.muted
+        }
+    }
+    var body: some View {
+        Label(status.label, systemImage: symbol).font(.caption.weight(.medium))
+            .foregroundStyle(color).accessibilityElement(children: .ignore)
+            .accessibilityLabel("Server status: \(status.label)")
     }
 }
 

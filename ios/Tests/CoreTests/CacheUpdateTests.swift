@@ -3,7 +3,7 @@ import Testing
 @testable import UchiyomiCore
 
 private final class AssetFixture: AssetFetching {
-    enum Failure { case none, offline, interrupted, corrupt, changed, schema, cancelled }
+    enum Failure { case none, offline, gatewayDown, assetGatewayDown, interrupted, corrupt, changed, schema, cancelled }
     var failure: Failure = .none
     var manifestReads = 0
     var assetReads = 0
@@ -16,6 +16,7 @@ private final class AssetFixture: AssetFetching {
         if path == "/mobile-assets.json" {
             manifestReads += 1
             if failure == .offline { throw URLError(.notConnectedToInternet) }
+            if failure == .gatewayDown { return HTTPResponse(status: 502, headers: ["Content-Type": "text/html"], body: Data("This App is Down".utf8)) }
             var manifest = AssetManifest(schemaVersion: 1, protocolVersion: 1,
                 offlineSchemaVersion: failure == .schema ? 3 : 2,
                 buildId: AssetManifest.digest(Data((revision + (failure == .changed && manifestReads > 1 ? "changed" : "")).utf8)),
@@ -25,6 +26,7 @@ private final class AssetFixture: AssetFetching {
             return HTTPResponse(status: 200, headers: ["Content-Type": "application/json"], body: try JSONEncoder().encode(manifest))
         }
         assetReads += 1
+        if failure == .assetGatewayDown { return HTTPResponse(status: 503) }
         if failure == .interrupted && assetReads == 3 { throw URLError(.networkConnectionLost) }
         if failure == .cancelled && assetReads == 3 { throw CancellationError() }
         return HTTPResponse(status: 200, body: failure == .corrupt ? Data("wrong".utf8) : bytes(path))
@@ -62,16 +64,23 @@ final class CacheUpdateTests {
 
     @Test func automaticFailuresUseSavedUIButDoNotHideCancellation() async throws {
         let (cache, first) = try await baseline()
-        for failure in [AssetFixture.Failure.offline, .interrupted, .corrupt, .changed, .schema] {
+        for failure in [AssetFixture.Failure.offline, .gatewayDown, .assetGatewayDown, .interrupted, .corrupt, .changed, .schema] {
             let remote = AssetFixture("second"); remote.failure = failure
             let result = try await cache.prepareForLaunch(client: remote) { _, _ in }
             #expect(result.ui.directory == first.directory)
-            #expect(result.updateFailed == (failure != .offline && failure != .interrupted))
+            #expect(result.fallbackError != nil)
+            let unavailable = [.offline, .gatewayDown, .assetGatewayDown, .interrupted].contains(failure)
+            #expect(ClientError.isUnavailable(try #require(result.fallbackError)) == unavailable)
+            if unavailable { #expect(ClientError.savedReaderMessage(try #require(result.fallbackError)).contains("Server unavailable")) }
             #expect(try await cache.load()?.directory == first.directory)
         }
         let cancelled = AssetFixture("second"); cancelled.failure = .cancelled
         do { _ = try await cache.prepareForLaunch(client: cancelled) { _, _ in }; Issue.record("Swallowed cancellation") }
         catch is CancellationError {} catch { Issue.record("Unexpected error: \(error)") }
+        let freshDown = AssetCache(root: root.appendingPathComponent("fresh-down"))
+        let down = AssetFixture("first"); down.failure = .gatewayDown
+        do { _ = try await freshDown.prepareForLaunch(client: down) { _, _ in }; Issue.record("Invented an offline cache") }
+        catch { #expect(ClientError.isUnavailable(error)); #expect(!ClientError.connectionMessage(error).contains("saved")) }
         let missing = AssetCache(root: root.appendingPathComponent("missing"))
         let offline = AssetFixture("first"); offline.failure = .offline
         do { _ = try await missing.prepareForLaunch(client: offline) { _, _ in }; Issue.record("Invented an offline cache") }

@@ -3,7 +3,34 @@ import CryptoKit
 
 enum ClientError: LocalizedError {
     case invalid(String)
-    var errorDescription: String? { if case .invalid(let message) = self { return message }; return nil }
+    case serverUnavailable(Int)
+    var errorDescription: String? {
+        switch self {
+        case .invalid(let message): return message
+        case .serverUnavailable:
+            return "The server is unavailable right now. Try again when it is back online."
+        }
+    }
+
+    static func checkAvailability(_ response: HTTPResponse) throws {
+        if (500...599).contains(response.status) { throw ClientError.serverUnavailable(response.status) }
+    }
+
+    static func isUnavailable(_ error: Error) -> Bool {
+        if case .serverUnavailable = error as? ClientError { return true }
+        guard let network = error as? URLError else { return false }
+        return [.notConnectedToInternet, .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed,
+                .timedOut, .networkConnectionLost, .dataNotAllowed, .internationalRoamingOff].contains(network.code)
+    }
+
+    static func savedReaderMessage(_ error: Error) -> String {
+        if isUnavailable(error) { return "Server unavailable. You’re using the saved offline reader." }
+        if (error as? CocoaError)?.code == .fileWriteOutOfSpace {
+            return "Not enough storage to save the update. Free some space and try again. Your saved reader is still available."
+        }
+        if error is URLError { return connectionMessage(error) + " Your saved reader is still available." }
+        return "The reader update couldn’t be completed. Your saved reader is still available."
+    }
 
     static func connectionMessage(_ error: Error) -> String {
         guard let network = error as? URLError else { return error.localizedDescription }
@@ -12,10 +39,28 @@ enum ClientError: LocalizedError {
             return "A secure connection could not be established. Check the HTTPS address and make sure this device trusts the server's certificate."
         case .clientCertificateRejected, .clientCertificateRequired:
             return "This server requires a client certificate. Choose a server that supports password sign-in without a client certificate."
-        case .notConnectedToInternet, .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed, .timedOut:
+        case .notConnectedToInternet, .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed, .timedOut, .networkConnectionLost, .dataNotAllowed, .internationalRoamingOff:
             return "The server could not be reached. Check its address and your connection, then try again. Saved downloads are kept."
         default: return error.localizedDescription
         }
+    }
+}
+
+enum ServerAvailability: Equatable, Sendable {
+    case unknown, checking, available, unavailable, needsAttention
+
+    var label: String {
+        switch self {
+        case .unknown: return "Not checked"
+        case .checking: return "Checking…"
+        case .available: return "Available"
+        case .unavailable: return "Unavailable"
+        case .needsAttention: return "Needs attention"
+        }
+    }
+
+    static func failure(_ error: Error) -> Self {
+        ClientError.isUnavailable(error) ? .unavailable : .needsAttention
     }
 }
 
@@ -52,6 +97,7 @@ struct ServerProfile: Codable, Identifiable, Equatable {
 
 enum ServerCompatibility {
     static func validate(_ response: HTTPResponse) throws {
+        try ClientError.checkAvailability(response)
         guard response.status == 200,
               response.headers["Content-Type"]?.lowercased().split(separator: ";").first == "application/json",
               let config = try? JSONSerialization.jsonObject(with: response.body) as? [String: Any] else {
@@ -83,6 +129,7 @@ struct AssetManifest: Codable, Equatable {
     static func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
     static func validHash(_ text: String) -> Bool { text.count == 64 && text.allSatisfy { "0123456789abcdef".contains($0) } }
     static func decodeResponse(_ response: HTTPResponse) throws -> AssetManifest {
+        try ClientError.checkAvailability(response)
         guard response.status == 200,
               response.headers["Content-Type"]?.lowercased().split(separator: ";").first == "application/json",
               let manifest = try? JSONDecoder().decode(AssetManifest.self, from: response.body) else {

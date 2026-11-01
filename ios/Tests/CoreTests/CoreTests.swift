@@ -99,4 +99,23 @@ final class CoreTests {
         #expect(ClientError.connectionMessage(URLError(.clientCertificateRequired)).contains("client certificate"))
         #expect(ClientError.connectionMessage(URLError(.notConnectedToInternet)).contains("Saved downloads are kept"))
     }
+
+    @Test func testOutagesAreNotReportedAsCompatibilityOrStorageFailures() throws {
+        for status in [500, 502, 503, 504] {
+            let down = HTTPResponse(status: status, headers: ["Content-Type": "text/html"], body: Data("This App is Down".utf8))
+            for validate in [ServerCompatibility.validate, { _ = try AssetManifest.decodeResponse($0) }] {
+                do { try validate(down); Issue.record("Accepted an unavailable server") }
+                catch {
+                    #expect(ServerAvailability.failure(error) == .unavailable)
+                    #expect(ClientError.connectionMessage(error).contains("server is unavailable"))
+                    #expect(ClientError.savedReaderMessage(error).contains("saved offline reader"))
+                }
+            }
+        }
+        #expect(ServerAvailability.failure(URLError(.networkConnectionLost)) == .unavailable)
+        let tls = URLError(.serverCertificateUntrusted)
+        #expect(ServerAvailability.failure(tls) == .needsAttention)
+        #expect(ClientError.savedReaderMessage(tls).contains("certificate"))
+        #expect(ClientError.savedReaderMessage(CocoaError(.fileWriteOutOfSpace)).contains("Not enough storage"))
+    }
 }

@@ -41,6 +41,25 @@ final class IntegrationTests {
         if let directory { try? FileManager.default.removeItem(at: directory) }
     }
 
+    @Test func testAvailabilityProbeDistinguishesOutageAndCompatibilityWithoutAccountCookies() async throws {
+        let client = try RemoteClient(origin: origin, vault: MemoryVault())
+        defer { client.cancel() }
+        _ = try await client.fetch("/auth/login", maxBytes: 4096)
+        #expect(await ServerAvailability.check(origin) == .available)
+        _ = try await client.fetch("/__incompatible", maxBytes: 100)
+        #expect(await ServerAvailability.check(origin) == .needsAttention)
+        _ = try await client.fetch("/__server-down", maxBytes: 100)
+        #expect(await ServerAvailability.check(origin) == .unavailable)
+        // A gateway error page can exceed a small asset's declared size. Keep its
+        // HTTP outage reason rather than surfacing download cancellation/storage.
+        let anonymous = try RemoteClient(origin: origin, vault: MemoryVault())
+        defer { anonymous.cancel() }
+        do { _ = try await anonymous.fetch("/auth/config", maxBytes: 1); Issue.record("Accepted gateway error") }
+        catch { #expect(ClientError.isUnavailable(error), "\(error)") }
+        fixture.terminate(); fixture.waitUntilExit()
+        #expect(await ServerAvailability.check(origin) == .unavailable)
+    }
+
     @Test func testProxyCookiesRelaunchIsolationBinaryBodiesAndFailures() async throws {
         let vault = MemoryVault()
         let client = try RemoteClient(origin: origin, vault: vault)
