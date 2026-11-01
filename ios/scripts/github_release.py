@@ -12,6 +12,13 @@ def gh(*arguments):
     return subprocess.check_output(['gh', *arguments], text=True)
 
 
+def find_release(repository, tag):
+    # The tag endpoint excludes drafts. Authenticated listing includes them and
+    # also keeps authentication/network errors distinct from a missing release.
+    pages = json.loads(gh('api', '--paginate', '--slurp', f'repos/{repository}/releases?per_page=100'))
+    return next((r for page in pages for r in page if r['tag_name'] == tag), None)
+
+
 def release_assets(release, record):
     expected = {record['artifact'], 'release.json', 'SHA256SUMS'}
     assets = {a['name']: a for a in release['assets']}

@@ -3,6 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 import plistlib
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -158,6 +159,62 @@ class ReleaseTests(unittest.TestCase):
         release['assets'] += [{'name': 'SHA256SUMS', 'size': 1}, {'name': self.ipa.name, 'size': 1}]
         with self.assertRaisesRegex(ValueError, 'size'):
             release_assets(release, self.record)
+
+    def test_publisher_handles_new_and_partial_drafts_before_publication(self):
+        (self.root/'release.json').write_text(json.dumps(self.record))
+        (self.root/'SHA256SUMS').write_text(f"{self.record['sha256']}  {self.ipa.name}\n")
+        names = {self.ipa.name, 'release.json', 'SHA256SUMS'}
+        for partial in [False, True]:
+            with self.subTest(partial=partial):
+                release = {'id': 42, 'tag_name': self.record['releaseTag'], 'draft': True, 'assets': []} if partial else None
+                assets = {self.ipa.name: self.ipa.read_bytes()} if partial else {}
+                downloaded = set()
+                uploads = []
+
+                def fake_gh(*args):
+                    nonlocal release
+                    if args[0] == 'api':
+                        # GitHub's tag endpoint only returns published releases.
+                        if '/releases/tags/' in args[-1] and release['draft']:
+                            raise subprocess.CalledProcessError(1, args, stderr='HTTP 404')
+                        self.assertIn('/releases?per_page=100', args[-1])
+                        if release is not None:
+                            release['assets'] = [{'name': name, 'size': len(data)} for name, data in assets.items()]
+                        return json.dumps([[release] if release is not None else []])
+                    action = args[1]
+                    if action == 'create':
+                        self.assertIsNone(release)
+                        self.assertIn('--draft', args)
+                        release = {'id': 42, 'tag_name': self.record['releaseTag'], 'draft': True, 'assets': []}
+                    elif action == 'upload':
+                        path = Path(args[3])
+                        self.assertNotIn(path.name, assets)
+                        self.assertNotIn('--clobber', args)
+                        assets[path.name] = path.read_bytes()
+                        uploads.append(path.name)
+                    elif action == 'download':
+                        name = args[args.index('--pattern')+1]
+                        (Path(args[args.index('--dir')+1])/name).write_bytes(assets[name])
+                        downloaded.add(name)
+                    elif action == 'edit':
+                        self.assertEqual(downloaded, names)
+                        self.assertEqual(set(assets), names)
+                        self.assertIn('--draft=false', args)
+                        release['draft'] = False
+                    else:
+                        self.fail(f'Unexpected GitHub action: {args}')
+                    return ''
+
+                argv = ['publish-release.py', '--directory', str(self.root), '--repository', 'example/reader',
+                        '--tag', self.record['releaseTag']]
+                with patch('github_release.gh', side_effect=fake_gh), patch.object(sys, 'argv', argv), \
+                        patch('subprocess.check_output', return_value=self.record['sourceRevision']+'\n'):
+                    runpy.run_path(str(ROOT/'ios/scripts/publish-release.py'), run_name='__main__')
+                    downloaded.clear()
+                    runpy.run_path(str(ROOT/'ios/scripts/publish-release.py'), run_name='__main__')
+                self.assertFalse(release['draft'])
+                self.assertEqual(set(uploads), names-({self.ipa.name} if partial else set()))
+                self.assertEqual(len(uploads), len(set(uploads)))
 
     def test_network_failure_does_not_turn_into_an_empty_feed(self):
         with patch('github_release.gh', side_effect=RuntimeError('network unavailable')):
