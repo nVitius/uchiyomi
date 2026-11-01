@@ -35,9 +35,15 @@ final class CachedWebViewTests: XCTestCase {
             // A non-reader page establishes the real local origin before fixture data is seeded.
             web!.load(URLRequest(url: profile.localOrigin.appendingPathComponent("downloads/")))
             try await waitFor(web!, "document.readyState === 'complete' && !!window.uchiyomiNative")
+            try await waitFor(web!, "!!document.querySelector('input[type=password]')")
             let cookieVisible = try await web!.evaluateJavaScript("document.cookie.includes('uchiyomi_gateway')") as? Bool
             XCTAssertEqual(cookieVisible, false, "The local capability must remain HttpOnly")
             _ = try await web!.callAsyncJavaScript(Self.seed, arguments: [:], in: nil, contentWorld: .page)
+            // Establish the prepared account before simulating a relaunch. DOM readiness alone
+            // can precede React's initial anonymous auth result on a fresh hosted simulator.
+            // No reader route has been opened; both chapters must still render after recreation.
+            web!.reload()
+            try await waitFor(web!, "document.body.innerText.includes('Offline fixture')")
             // Tear down the web view and listener, then recreate both at the exact saved origin/store.
             web!.stopLoading(); web!.removeFromSuperview(); web = nil
             await gateway.stop()
@@ -62,7 +68,8 @@ final class CachedWebViewTests: XCTestCase {
             await gateway.stop()
         } catch {
             let text = try? await web?.evaluateJavaScript("document.body.innerText")
-            XCTFail("Web view did not reach the offline reader: \(error). Page: \(String(describing: text))")
+            let identity = try? await web?.evaluateJavaScript("localStorage.getItem('uchiyomi.offlineUser')")
+            XCTFail("Web view did not reach the offline reader: \(error). Fixture identity: \(String(describing: identity)). Page: \(String(describing: text))")
             await gateway.stop()
             throw error
         }

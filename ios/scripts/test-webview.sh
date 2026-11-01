@@ -38,4 +38,4 @@ xcodebuild -project ios/Uchiyomi.xcodeproj -scheme Uchiyomi -configuration Debug
   -destination "platform=iOS Simulator,id=$simulator" \
   -derivedDataPath "$output/DerivedData" -resultBundlePath "$output/tests.xcresult" \
   DEVELOPMENT_TEAM= CODE_SIGN_IDENTITY=- PRODUCT_BUNDLE_IDENTIFIER=org.uchiyomi.ci \
-  UCHI_TEST_BUNDLE_IDENTIFIER=org.uchiyomi.ci.tests test > "$output/test.log" 2>&1
+  UCHI_TEST_BUNDLE_IDENTIFIER=org.uchiyomi.ci.tests test 2>&1 | tee "$output/test.log"
