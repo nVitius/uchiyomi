@@ -165,9 +165,10 @@ final class RemoteClient {
         return http
     }
 
-    func fetch(_ target: String, maxBytes: Int, method: String = "GET", headers: [String: String] = [:], body: Data? = nil) async throws -> HTTPResponse {
+    func fetch(_ target: String, maxBytes: Int, method: String = "GET", headers: [String: String] = [:], body: Data? = nil, timeout: TimeInterval = 15) async throws -> HTTPResponse {
         try lifetime.whileActive {}
         var request = URLRequest(url: try url(for: target))
+        request.timeoutInterval = timeout
         request.httpMethod = method
         request.httpBody = body
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }

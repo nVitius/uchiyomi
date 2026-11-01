@@ -8,7 +8,10 @@ struct UchiyomiApp: App {
     var body: some Scene {
         WindowGroup {
             ReaderView(model: model)
-                .task { await model.restore() }
+                .task {
+                    // Hosted XCTest cases own their models/listeners, including installation fixtures.
+                    if NSClassFromString("XCTestCase") == nil { await model.restore() }
+                }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active { Task { await model.resume() } }
                 }
@@ -16,14 +19,59 @@ struct UchiyomiApp: App {
     }
 }
 
-private struct ReaderView: View {
+// Match the default web palette in web/app/globals.css.
+private enum ReaderTheme {
+    static let accent = Color(red: 124 / 255, green: 92 / 255, blue: 1)
+    static let foreground = Color(red: 247 / 255, green: 247 / 255, blue: 251 / 255)
+    static let muted = Color(red: 185 / 255, green: 185 / 255, blue: 198 / 255)
+    static let surface = Color(red: 11 / 255, green: 11 / 255, blue: 15 / 255)
+}
+private struct ReaderBackground: View {
+    var body: some View {
+        Color.black.overlay {
+            RadialGradient(colors: [ReaderTheme.accent.opacity(0.15), .clear],
+                           center: UnitPoint(x: 0.5, y: 0.2), startRadius: 0, endRadius: 360)
+        }.ignoresSafeArea()
+    }
+}
+private struct ReaderBrand: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            Image("BrandMark").resizable().scaledToFit().frame(width: 56, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: 8)).accessibilityHidden(true)
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                Text("uchiyomi").foregroundStyle(ReaderTheme.foreground)
+                Text(".").foregroundStyle(ReaderTheme.accent)
+            }
+            .font(.system(size: 42, weight: .bold, design: .rounded)).tracking(-1.5)
+            .accessibilityElement(children: .ignore).accessibilityLabel("Uchiyomi")
+        }
+    }
+}
+private struct ReaderCard: ViewModifier {
+    func body(content: Content) -> some View {
+        content.padding(24)
+            .background(ReaderTheme.surface, in: RoundedRectangle(cornerRadius: 24))
+            .overlay { RoundedRectangle(cornerRadius: 24).strokeBorder(.white.opacity(0.08), lineWidth: 1) }
+    }
+}
+private struct ReaderPrimaryButton: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.font(.body.weight(.semibold)).frame(maxWidth: .infinity)
+            .padding(.vertical, 16).foregroundStyle(.white)
+            .background(ReaderTheme.accent.opacity(configuration.isPressed ? 0.7 : 1), in: RoundedRectangle(cornerRadius: 16))
+    }
+}
+
+struct ReaderView: View {
     @ObservedObject var model: ReaderModel
     var body: some View {
         NavigationStack {
             Group {
-                if let webView = model.webView {
-                    ReaderWebView(view: webView, model: model)
-                        .id(ObjectIdentifier(webView))
+                if model.progress != nil {
+                    ReaderLoadingView(model: model)
+                } else if let webView = model.webView {
+                    ReaderWebView(view: webView, model: model).id(ObjectIdentifier(webView))
                 } else {
                     ServerConnectionView(model: model)
                 }
@@ -35,32 +83,24 @@ private struct ReaderView: View {
                 if model.webView != nil {
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
-                            Button("Servers") { model.showingServers = true }.disabled(model.busy)
-                            Button("Reload reader") { Task { await model.reload() } }.disabled(model.busy)
-                            Button("Downloads") { model.showDownloads() }.disabled(model.busy)
-                            Button("Check for reader updates") { Task { await model.checkForUpdate() } }
-                                .disabled(model.busy)
-                            if model.canRecover {
-                                Button("Restore previous reader") { Task { await model.recover() } }
-                                    .disabled(model.busy)
-                            }
-                            Button("Download reader again") { Task { await model.downloadAgain() } }
-                                .disabled(model.busy)
+                            Button("Servers", systemImage: "server.rack") { model.showingServers = true }
+                            Button("Reload", systemImage: "arrow.clockwise") { Task { await model.reload() } }
                         } label: { Image(systemName: "ellipsis.circle") }
+                        .disabled(model.busy).accessibilityLabel("Reader menu")
                     }
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                if model.webView != nil {
+                if model.webView != nil && (model.awaitingConfirmation || model.status != nil || model.error != nil) {
                     VStack(spacing: 10) {
-                        if let progress = model.progress { ProgressView(progress).font(.footnote) }
-                        if model.updateAvailable {
-                            Text("Reader update ready.").font(.footnote)
-                            Button("Apply update") { Task { await model.applyUpdate() } }.disabled(model.busy)
-                        }
                         if model.awaitingConfirmation {
-                            Text("If the reader has opened correctly, keep this version.").font(.footnote)
-                            Button("Keep this version") { Task { await model.confirmUI() } }.disabled(model.busy)
+                            Text("If the app has opened correctly, keep this version.").font(.footnote)
+                            HStack {
+                                Button("Keep this version") { Task { await model.confirmUI() } }
+                                if model.canRecover {
+                                    Button("Restore previous version") { Task { await model.recover() } }
+                                }
+                            }.disabled(model.busy)
                         }
                         if let status = model.status {
                             HStack {
@@ -71,168 +111,148 @@ private struct ReaderView: View {
                         if let error = model.error {
                             Text(error).font(.footnote)
                             HStack {
-                                Button("Reload") { Task { await model.reload() } }
+                                Button("Try again") { Task { await model.retry() } }
                                 if model.canRecover {
-                                    Button("Restore previous reader") { Task { await model.recover() } }
+                                    Button("Restore previous version") { Task { await model.recover() } }
                                 }
                             }.font(.footnote).disabled(model.busy)
                         }
-                    }
-                    .padding(model.progress != nil || model.updateAvailable || model.awaitingConfirmation || model.status != nil || model.error != nil ? 12 : 0)
-                    .frame(maxWidth: .infinity).background(.regularMaterial)
+                    }.padding(12).frame(maxWidth: .infinity).background(.regularMaterial)
                 }
             }
+            .navigationDestination(isPresented: $model.showingServers) { ServerManagementView(model: model) }
         }
-        .tint(Color(red: 124 / 255, green: 92 / 255, blue: 1))
-        .preferredColorScheme(.dark)
-        .sheet(isPresented: $model.showingServers) { ServerListView(model: model) }
+        .tint(ReaderTheme.accent).preferredColorScheme(.dark)
     }
 }
 
-private struct ServerListView: View {
+struct ReaderLoadingView: View {
+    @ObservedObject var model: ReaderModel
+    var body: some View {
+        VStack(spacing: 32) {
+            ReaderBrand()
+            VStack(spacing: 18) {
+                Text(model.serverName).font(.headline).multilineTextAlignment(.center)
+                if let value = model.downloadProgress {
+                    ProgressView(value: value).tint(ReaderTheme.accent)
+                        .accessibilityLabel("Download progress")
+                    Text(model.progress ?? "Opening your library…").font(.subheadline).foregroundStyle(ReaderTheme.muted)
+                    Text(value, format: .percent.precision(.fractionLength(0)))
+                        .font(.caption.monospacedDigit()).foregroundStyle(ReaderTheme.muted)
+                } else {
+                    ProgressView().tint(ReaderTheme.accent)
+                    Text(model.progress ?? "Opening your library…").font(.subheadline).foregroundStyle(ReaderTheme.muted)
+                }
+            }.modifier(ReaderCard())
+        }
+        .frame(maxWidth: 420).padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background { ReaderBackground() }.accessibilityIdentifier("readerLoading")
+    }
+}
+
+struct ServerManagementView: View {
     @ObservedObject var model: ReaderModel
     @State private var removing: ServerProfile?
-    @Environment(\.dismiss) private var dismiss
     var body: some View {
-        NavigationStack {
-            List {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                HStack(spacing: 14) {
+                    Image("BrandMark").resizable().scaledToFit().frame(width: 40, height: 40)
+                        .clipShape(RoundedRectangle(cornerRadius: 8)).accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Your servers").font(.title2.weight(.bold))
+                        Text("Choose a library to open.").font(.subheadline).foregroundStyle(ReaderTheme.muted)
+                    }
+                }.padding(.vertical, 8)
                 ForEach(model.profiles) { profile in
-                    HStack {
+                    VStack(alignment: .leading, spacing: 20) {
                         Button { Task { await model.choose(profile) } } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(profile.origin.host ?? "Uchiyomi").font(.headline)
-                                    Text(profile.origin.absoluteString).font(.caption).foregroundStyle(.secondary)
+                            HStack(spacing: 14) {
+                                Image(systemName: "server.rack").font(.title2).foregroundStyle(ReaderTheme.accent)
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(profile.origin.host ?? "Uchiyomi").font(.headline).foregroundStyle(ReaderTheme.foreground)
+                                    Text(profile.origin.absoluteString).font(.caption).foregroundStyle(ReaderTheme.muted)
+                                        .lineLimit(2).multilineTextAlignment(.leading)
                                 }
-                                Spacer()
-                                if model.selectedID == profile.id { Image(systemName: "checkmark") }
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(ReaderTheme.muted)
                             }.contentShape(Rectangle())
-                        }.buttonStyle(.plain)
-                        Button(role: .destructive) { removing = profile } label: { Image(systemName: "trash") }
-                            .buttonStyle(.borderless).accessibilityLabel("Remove \(profile.origin.host ?? "server")")
-                    }.disabled(model.busy)
+                        }.buttonStyle(.plain).accessibilityIdentifier("selectServer-\(profile.id)")
+                        HStack {
+                            if model.selectedID == profile.id {
+                                Label("Selected", systemImage: "checkmark.circle.fill")
+                                    .font(.caption.weight(.medium)).foregroundStyle(ReaderTheme.accent)
+                            }
+                            Spacer()
+                            Button("Remove", systemImage: "trash", role: .destructive) { removing = profile }
+                                .font(.caption).frame(minHeight: 44).accessibilityLabel("Remove \(profile.origin.host ?? "server")")
+                        }
+                    }.modifier(ReaderCard()).disabled(model.busy)
                 }
-                Button("Add server", systemImage: "plus") { Task { await model.addServer() } }.disabled(model.busy)
+                Button { Task { await model.addServer() } } label: { Label("Add server", systemImage: "plus") }
+                    .buttonStyle(ReaderPrimaryButton()).disabled(model.busy)
                 if let error = model.error { Text(error).font(.footnote).foregroundStyle(.red) }
-            }
-            .navigationTitle("Servers").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            .confirmationDialog("Remove this server from this device?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible, presenting: removing) { profile in
-                Button("Remove server", role: .destructive) { Task { await model.forget(profile) } }
-                Button("Cancel", role: .cancel) {}
-            } message: { profile in
-                Text("This removes the saved session, downloads, and unsynced progress for \(profile.origin.absoluteString) from this device. The server library is kept.")
-            }
-        }.tint(Color(red: 124 / 255, green: 92 / 255, blue: 1)).preferredColorScheme(.dark)
+            }.frame(maxWidth: 560).padding(24).frame(maxWidth: .infinity)
+        }
+        .background { ReaderBackground() }
+        .navigationTitle("Servers").navigationBarTitleDisplayMode(.inline).toolbar(.visible, for: .navigationBar)
+        .confirmationDialog("Remove this server from this device?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible, presenting: removing) { profile in
+            Button("Remove server", role: .destructive) { Task { await model.forget(profile) } }
+            Button("Cancel", role: .cancel) {}
+        } message: { profile in
+            Text("This removes the saved session, downloads, and unsynced progress for \(profile.origin.absoluteString) from this device. The server library is kept.")
+        }
     }
 }
 
-// Match the default web palette in web/app/globals.css; keep setup usable before any server is saved.
 private struct ServerConnectionView: View {
     @ObservedObject var model: ReaderModel
     @FocusState private var addressFocused: Bool
-    private let accent = Color(red: 124 / 255, green: 92 / 255, blue: 1)
-    private let foreground = Color(red: 247 / 255, green: 247 / 255, blue: 251 / 255)
-    private let muted = Color(red: 185 / 255, green: 185 / 255, blue: 198 / 255)
-
     private func connect() {
         addressFocused = false
         Task { await model.connect() }
     }
-
     var body: some View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(spacing: 32) {
                     VStack(spacing: 16) {
-                        Image("BrandMark")
-                            .resizable().scaledToFit().frame(width: 56, height: 56)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .accessibilityHidden(true)
-                        HStack(alignment: .firstTextBaseline, spacing: 0) {
-                            Text("uchiyomi").foregroundStyle(foreground)
-                            Text(".").foregroundStyle(accent)
-                        }
-                        .font(.system(size: 42, weight: .bold, design: .rounded))
-                        .tracking(-1.5)
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("Uchiyomi")
-                        Text("Your library, your way.")
-                            .font(.subheadline).foregroundStyle(muted)
+                        ReaderBrand()
+                        Text("Your library, your way.").font(.subheadline).foregroundStyle(ReaderTheme.muted)
                     }
                     VStack(alignment: .leading, spacing: 18) {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text("SERVER ADDRESS")
-                                .font(.caption.weight(.medium)).tracking(1.2)
-                                .foregroundStyle(muted)
+                            Text("SERVER ADDRESS").font(.caption.weight(.medium)).tracking(1.2).foregroundStyle(ReaderTheme.muted)
                             TextField("https://books.example.com", text: $model.address)
-                                .font(.body).foregroundStyle(foreground)
+                                .font(.body).foregroundStyle(ReaderTheme.foreground)
                                 .textContentType(.URL).keyboardType(.URL)
                                 .textInputAutocapitalization(.never).autocorrectionDisabled()
                                 .submitLabel(.go).focused($addressFocused).onSubmit(connect)
-                                .padding(16)
-                                .background(.black.opacity(0.4), in: RoundedRectangle(cornerRadius: 16))
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 16)
-                                        .strokeBorder(addressFocused ? accent : .white.opacity(0.12), lineWidth: 1)
-                                }
-                                .disabled(model.progress != nil)
-                                .accessibilityLabel("Server address")
-                                .accessibilityIdentifier("serverAddress")
+                                .padding(16).background(.black.opacity(0.4), in: RoundedRectangle(cornerRadius: 16))
+                                .overlay { RoundedRectangle(cornerRadius: 16).strokeBorder(addressFocused ? ReaderTheme.accent : .white.opacity(0.12), lineWidth: 1) }
+                                .accessibilityLabel("Server address").accessibilityIdentifier("serverAddress")
                         }
-                        Button(action: connect) {
-                            HStack(spacing: 10) {
-                                if model.progress != nil { ProgressView().tint(.white) }
-                                Text(model.progress == nil ? "Connect to server" : "Connecting…")
-                                    .font(.body.weight(.semibold))
-                                if model.progress == nil { Image(systemName: "arrow.right") }
-                            }
-                            .frame(maxWidth: .infinity).padding(.vertical, 16)
-                            .foregroundStyle(.white)
-                            .background(accent, in: RoundedRectangle(cornerRadius: 16))
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(model.progress != nil || model.address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .opacity(model.address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.5 : 1)
-                        .accessibilityIdentifier("prepareUI")
-                        if let progress = model.progress {
-                            Text(progress).font(.footnote).foregroundStyle(muted)
-                                .frame(maxWidth: .infinity).accessibilityIdentifier("connectionProgress")
-                        }
+                        Button(action: connect) { Label("Connect to server", systemImage: "arrow.right") }
+                            .buttonStyle(ReaderPrimaryButton())
+                            .disabled(model.busy || model.address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .opacity(model.address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.5 : 1)
+                            .accessibilityIdentifier("prepareUI")
                         if let error = model.error {
-                            Label(error, systemImage: "exclamationmark.circle")
-                                .font(.footnote).foregroundStyle(Color(red: 1, green: 0.6, blue: 0.6))
-                                .fixedSize(horizontal: false, vertical: true)
-                                .accessibilityIdentifier("connectionError")
+                            Label(error, systemImage: "exclamationmark.circle").font(.footnote)
+                                .foregroundStyle(Color(red: 1, green: 0.6, blue: 0.6))
+                                .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("connectionError")
                             if model.canRecover {
-                                Button("Restore previous reader") { Task { await model.recover() } }
-                                    .font(.footnote).disabled(model.busy)
+                                Button("Restore previous version") { Task { await model.recover() } }.font(.footnote).disabled(model.busy)
                             }
                         }
-                    }
-                    .padding(24)
-                    .background(Color(red: 11 / 255, green: 11 / 255, blue: 15 / 255), in: RoundedRectangle(cornerRadius: 24))
-                    .overlay { RoundedRectangle(cornerRadius: 24).strokeBorder(.white.opacity(0.08), lineWidth: 1) }
+                    }.modifier(ReaderCard())
                     if !model.profiles.isEmpty {
-                        Button("Saved servers") { addressFocused = false; model.showingServers = true }
-                            .disabled(model.busy)
+                        Button("Saved servers") { addressFocused = false; model.showingServers = true }.disabled(model.busy)
                     }
-                }
-                .frame(maxWidth: 420)
-                .padding(.horizontal, 24).padding(.vertical, 32)
-                .frame(maxWidth: .infinity, minHeight: geometry.size.height)
-            }
-            .scrollDismissesKeyboard(.interactively)
-        }
-        .background {
-            Color.black.ignoresSafeArea()
-                .overlay {
-                    RadialGradient(colors: [accent.opacity(0.15), .clear], center: UnitPoint(x: 0.5, y: 0.25), startRadius: 0, endRadius: 320)
-                        .ignoresSafeArea()
-                }
-        }
-        .tint(accent)
-        .preferredColorScheme(.dark)
+                }.frame(maxWidth: 420).padding(.horizontal, 24).padding(.vertical, 32)
+                    .frame(maxWidth: .infinity, minHeight: geometry.size.height)
+            }.scrollDismissesKeyboard(.interactively)
+        }.background { ReaderBackground() }
     }
 }
 

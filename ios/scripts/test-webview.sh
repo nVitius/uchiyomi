@@ -6,6 +6,7 @@ export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Develope
 output="${1:-ios/build/WebViewCI}"
 [[ ! -e "$output" ]] || { echo "Output already exists: $output" >&2; exit 1; }
 mkdir -p "$output"
+node ios/scripts/prepare-webview-fixture.mjs
 simulator="${UCHI_SIMULATOR_ID:-}"
 device_type="${UCHI_SIMULATOR_DEVICE_TYPE:-com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro}"
 created=false

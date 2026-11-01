@@ -76,6 +76,9 @@ struct AssetManifest: Codable, Equatable {
     let buildId: String
     let files: [Asset]
     var startupCheckVersion: Int? = nil
+    var version: String? = nil
+
+    var displayVersion: String { version ?? String(buildId.prefix(8)) }
 
     static func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
     static func validHash(_ text: String) -> Bool { text.count == 64 && text.allSatisfy { "0123456789abcdef".contains($0) } }
@@ -94,6 +97,11 @@ struct AssetManifest: Codable, Equatable {
         return path.dropFirst().split(separator: "/", omittingEmptySubsequences: false).allSatisfy { !$0.isEmpty && !$0.hasPrefix(".") }
     }
     func validate() throws {
+        if let version {
+            guard version.count <= 80, version.range(of: #"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$"#, options: .regularExpression) != nil else {
+                throw ClientError.invalid("The server published an invalid app version.")
+            }
+        }
         guard schemaVersion == 1, protocolVersion == 1, offlineSchemaVersion == 2,
               (0...1).contains(startupCheckVersion ?? 0), Self.validHash(buildId) else {
             throw ClientError.invalid("This server's UI needs a different wrapper or offline storage version.")

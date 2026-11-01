@@ -10,7 +10,7 @@ final class ReaderModel: ObservableObject {
     @Published var webView: WKWebView?
     @Published var serverName = "Uchiyomi"
     @Published var busy = false
-    @Published var updateAvailable = false
+    @Published var downloadProgress: Double?
     @Published var awaitingConfirmation = false
     @Published var canRecover = false
     @Published var profiles: [ServerProfile] = []
@@ -22,16 +22,21 @@ final class ReaderModel: ObservableObject {
     private var client: RemoteClient?
     private var cache: AssetCache?
     private var activeUI: PreparedUI?
-    private var stagedUI: PreparedUI?
     private var startupTask: Task<Void, Never>?
     private var readerID = UUID()
     private var restored = false
     private let root: URL
+    private let assetClient: ((RemoteClient) -> any AssetFetching)?
+    private let startupTimeout: UInt64
     private lazy var store = ProfileStore(root: root)
     private var catalog = ProfileStore.Catalog()
 
-    init(root: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Uchiyomi", isDirectory: true)) {
+    init(root: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Uchiyomi", isDirectory: true),
+         startupTimeout: UInt64 = 30_000_000_000,
+         assetClient: ((RemoteClient) -> any AssetFetching)? = nil) {
         self.root = root
+        self.startupTimeout = startupTimeout
+        self.assetClient = assetClient
     }
 
     private func save(_ updated: ProfileStore.Catalog) throws {
@@ -80,38 +85,46 @@ final class ReaderModel: ObservableObject {
         }
         return retired == nil
     }
-    private func open(_ selected: ServerProfile, prepare: Bool, location: URL? = nil) async {
+    private func open(_ selected: ServerProfile, prepare: Bool, checkForUpdates: Bool = true) async {
         guard !busy else { return }
         busy = true
         defer { busy = false }
-        await replaceReader(selected, prepare: prepare, location: location)
+        await replaceReader(selected, prepare: prepare, checkForUpdates: checkForUpdates)
     }
     // Callers hold busy across the entire transition, including cache activation/rollback.
-    private func replaceReader(_ selected: ServerProfile, prepare: Bool, location: URL? = nil) async {
+    private func replaceReader(_ selected: ServerProfile, prepare: Bool, checkForUpdates: Bool = true) async {
         precondition(busy)
-        error = nil; status = nil; progress = "Opening your library…"
-        defer { progress = nil }
+        error = nil; status = nil; progress = "Checking for updates…"; downloadProgress = nil
+        serverName = selected.origin.host ?? "Uchiyomi"
+        showingServers = false
+        defer { progress = nil; downloadProgress = nil }
         await stopReader()
         profile = selected; address = selected.origin.absoluteString
-        updateAvailable = false; stagedUI = nil; awaitingConfirmation = false
+        awaitingConfirmation = false
         let cache = AssetCache(root: store.directory(for: selected).appendingPathComponent("ui"))
         self.cache = cache
         canRecover = (try? await cache.previous()) != nil
         do {
             let remote = try RemoteClient(origin: selected.origin, vault: KeychainCookieVault(profileID: selected.id))
             client = remote
-            let ui: PreparedUI
-            if prepare {
-                progress = "Checking server…"
+            let savedUI = try? await cache.load()
+            let previousUI = savedUI == nil ? try? await cache.previous() : nil
+            if prepare || (savedUI == nil && previousUI == nil) {
+                progress = "Connecting to server…"
                 let response = try await remote.fetch("/auth/config", maxBytes: 64 * 1024)
                 try ServerCompatibility.validate(response)
-                ui = try await cache.prepare(client: remote) { [weak self] count, total in
-                    await MainActor.run { self?.progress = "Saving for offline use: \(count) of \(total)" }
-                }
-            } else {
-                guard let saved = try await cache.load() else { throw ClientError.invalid("Connect to this server once to save the app for offline use.") }
-                ui = saved
             }
+            progress = "Checking for updates…"
+            let launch = try await cache.prepareForLaunch(client: assetClient?(remote) ?? remote,
+                                                         checkForUpdates: checkForUpdates) { [weak self] count, total in
+                await MainActor.run {
+                    self?.progress = "Saving for offline use…"
+                    self?.downloadProgress = Double(count) / Double(max(total, 1))
+                }
+            }
+            let ui = launch.ui
+            if launch.updateFailed { status = "The update couldn’t be saved. Your saved version is ready to use." }
+            progress = "Opening your library…"
             let gateway = Gateway(profile: selected, ui: ui, client: remote)
             try await gateway.start()
             self.gateway = gateway; profile = selected; activeUI = ui
@@ -129,12 +142,18 @@ final class ReaderModel: ObservableObject {
             webView = view
             addingServer = false; showingServers = false
             // Start at the web app's home page; its auth state handles offline fallback.
-            view.load(URLRequest(url: location ?? selected.localOrigin))
+            view.load(URLRequest(url: selected.localOrigin))
             if pending && ui.manifest.startupCheckVersion == 1 {
                 startupTask = Task { [weak self, weak view] in
-                    do { try await Task.sleep(nanoseconds: 30_000_000_000) } catch { return }
+                    do { try await Task.sleep(nanoseconds: self?.startupTimeout ?? 30_000_000_000) } catch { return }
                     guard let self, self.webView === view else { return }
-                    self.error = "The saved app did not finish starting. Reload it, restore the previous version, or download it again."
+                    if self.canRecover {
+                        self.startupTask = nil
+                        await self.recover()
+                        if self.error == nil { self.status = "The update couldn’t start. Your previous version has been restored." }
+                    } else {
+                        self.error = "The app couldn’t finish starting. Check your connection and try again."
+                    }
                 }
             }
         } catch {
@@ -158,41 +177,18 @@ final class ReaderModel: ObservableObject {
             self.error = "Could not confirm this app version: \(error.localizedDescription)"
         }
     }
-    func checkForUpdate() async {
-        guard !busy, let client, let cache, let ui = activeUI else { return }
-        busy = true; error = nil; status = nil; progress = "Checking for an update…"
-        defer { busy = false; progress = nil }
-        do {
-            let latest = try AssetManifest.decodeResponse(await client.fetch("/mobile-assets.json", maxBytes: 4 * 1024 * 1024))
-            if latest == ui.manifest { status = "The saved app is up to date."; return }
-            let staged = try await cache.stage(client: client) { [weak self] count, total in
-                await MainActor.run { self?.progress = "Downloading update: \(count) of \(total)" }
-            }
-            stagedUI = staged; updateAvailable = true
-        } catch { self.error = "Update could not be saved. Your current app is still available. \(error.localizedDescription)" }
-    }
-    func applyUpdate() async {
-        guard !busy, let profile, let cache, let stagedUI else { return }
-        busy = true
-        defer { busy = false }
-        let location = webView?.url
-        do {
-            try await cache.activate(stagedUI)
-            await replaceReader(profile, prepare: false, location: location)
-        } catch { self.error = error.localizedDescription }
-    }
     func recover() async {
         guard !busy, let profile, let cache else { return }
         busy = true
         defer { busy = false }
         do {
-            _ = try await cache.rollback()
-            await replaceReader(profile, prepare: false)
+            _ = try await cache.rollback(rejectingCurrent: true)
+            await replaceReader(profile, prepare: false, checkForUpdates: false)
         } catch { self.error = error.localizedDescription }
     }
-    func downloadAgain() async {
+    func retry() async {
         guard let profile else { await connect(); return }
-        await open(profile, prepare: true)
+        await open(profile, prepare: false)
     }
     func choose(_ selected: ServerProfile) async {
         guard !busy, profiles.contains(selected) else { return }
@@ -204,9 +200,9 @@ final class ReaderModel: ObservableObject {
         busy = true
         defer { busy = false }
         await stopReader()
-        profile = nil; activeUI = nil; stagedUI = nil; cache = nil
+        profile = nil; activeUI = nil; cache = nil
         address = ""; error = nil; status = nil; canRecover = false
-        updateAvailable = false; awaitingConfirmation = false
+        awaitingConfirmation = false
         showingServers = false; addingServer = true
     }
     /// Call only after the user confirms deletion in the server list.
@@ -217,8 +213,8 @@ final class ReaderModel: ObservableObject {
         do {
             if profile?.id == forgotten.id {
                 guard await stopReader() else { throw ClientError.invalid("The reader is still closing. Please try again.") }
-                profile = nil; cache = nil; activeUI = nil; stagedUI = nil
-                canRecover = false; updateAvailable = false; awaitingConfirmation = false
+                profile = nil; cache = nil; activeUI = nil
+                canRecover = false; awaitingConfirmation = false
                 address = ""; status = nil
             }
             // Remove credentials before files; keep a failed removal listed so it can be retried.
@@ -246,10 +242,6 @@ final class ReaderModel: ObservableObject {
         await resume()
         guard !busy, webView === view else { return }
         view.reload()
-    }
-    func showDownloads() {
-        guard !busy, let profile else { return }
-        webView?.load(URLRequest(url: profile.localOrigin.appendingPathComponent("downloads/")))
     }
     func isLocal(_ url: URL) -> Bool {
         guard let profile else { return false }

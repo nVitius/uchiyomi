@@ -5,7 +5,7 @@ protocol AssetFetching {
 }
 extension RemoteClient: AssetFetching {
     func assetResponse(_ path: String, maxBytes: Int) async throws -> HTTPResponse {
-        try await fetch(path, maxBytes: maxBytes)
+        try await fetch(path, maxBytes: maxBytes, timeout: path == "/mobile-assets.json" ? 5 : 15)
     }
 }
 
@@ -67,12 +67,45 @@ actor AssetCache {
     }
     func needsConfirmation() throws -> Bool { try selection()?.confirmed == false }
 
+    struct LaunchResult {
+        let ui: PreparedUI
+        let updateFailed: Bool
+    }
+
+    /// Called only at startup/server selection, before a reader uses the generation.
+    func prepareForLaunch(client: any AssetFetching, checkForUpdates: Bool = true,
+                          progress: @escaping (Int, Int) async -> Void) async throws -> LaunchResult {
+        var saved = try? load()
+        if saved == nil || (checkForUpdates && (try? needsConfirmation()) == true && saved?.manifest.startupCheckVersion == 1) {
+            if (try? previous()) != nil { saved = try rollback(rejectingCurrent: true) }
+        }
+        if !checkForUpdates, let saved { return LaunchResult(ui: saved, updateFailed: false) }
+        do {
+            let reply = try await client.assetResponse("/mobile-assets.json", maxBytes: 4 * 1024 * 1024)
+            let manifest = try AssetManifest.decodeResponse(reply)
+            let rejected = try? String(contentsOf: root.appendingPathComponent("rejected-build.txt"), encoding: .utf8)
+            if let saved, manifest == saved.manifest || manifest.buildId == rejected {
+                return LaunchResult(ui: saved, updateFailed: false)
+            }
+            let ui = try await stage(client: client, progress: progress, initialResponse: reply)
+            try activate(ui)
+            return LaunchResult(ui: ui, updateFailed: false)
+        } catch {
+            if error is CancellationError { throw error }
+            guard let saved else { throw error }
+            // Ordinary offline startup is expected, so it does not need an update warning.
+            return LaunchResult(ui: saved, updateFailed: !(error is URLError))
+        }
+    }
+
     /// Stage without changing the selected version or files used by an open reader.
-    func stage(client: any AssetFetching, progress: @escaping (Int, Int) async -> Void) async throws -> PreparedUI {
+    func stage(client: any AssetFetching, progress: @escaping (Int, Int) async -> Void, initialResponse: HTTPResponse? = nil) async throws -> PreparedUI {
         guard !preparing else { throw ClientError.invalid("An app download is already in progress.") }
         preparing = true
         defer { preparing = false }
-        let reply = try await client.assetResponse("/mobile-assets.json", maxBytes: 4 * 1024 * 1024)
+        let reply: HTTPResponse
+        if let initialResponse { reply = initialResponse }
+        else { reply = try await client.assetResponse("/mobile-assets.json", maxBytes: 4 * 1024 * 1024) }
         let manifest = try AssetManifest.decodeResponse(reply)
         let fm = FileManager.default
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
@@ -135,8 +168,12 @@ actor AssetCache {
             try? FileManager.default.removeItem(at: directory)
         }
     }
-    func rollback() throws -> PreparedUI {
+    func rollback(rejectingCurrent: Bool = false) throws -> PreparedUI {
         guard let ui = try previous() else { throw ClientError.invalid("No previous app version is available. Connect to download the app again.") }
+        if rejectingCurrent, let current = try selection() {
+            let build = String(current.active.prefix(64))
+            if AssetManifest.validHash(build) { try write(Data(build.utf8), root.appendingPathComponent("rejected-build.txt")) }
+        }
         try save(Selection(active: ui.directory.lastPathComponent, confirmed: true))
         return ui
     }

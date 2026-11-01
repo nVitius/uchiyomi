@@ -42,3 +42,16 @@ test('private and server paths cannot enter the static inventory', async t => {
   await writeFile(join(root, 'auth/session'), 'test-only session');
   await assert.rejects(createManifest(root), /Server path/);
 });
+
+test('host version is readable, validated and part of the build identity', async t => {
+  const root = await fixture(t);
+  const first = await createManifest(root, { version: '0.101.0' });
+  const second = await createManifest(root, { version: '0.101.1-beta.1' });
+  assert.equal(first.version, '0.101.0');
+  assert.equal(second.version, '0.101.1-beta.1');
+  assert.notEqual(first.buildId, second.buildId);
+  assert.deepEqual(first.files, second.files);
+  for (const version of ['', 'latest', '../version', '1.0.0-' + 'a'.repeat(80), 12]) {
+    await assert.rejects(createManifest(root, { version }), /Invalid app version/);
+  }
+});

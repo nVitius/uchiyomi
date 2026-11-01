@@ -3,10 +3,11 @@ import Testing
 @testable import UchiyomiCore
 
 private final class AssetFixture: AssetFetching {
-    enum Failure { case none, interrupted, corrupt, changed, schema, cancelled }
+    enum Failure { case none, offline, interrupted, corrupt, changed, schema, cancelled }
     var failure: Failure = .none
     var manifestReads = 0
     var assetReads = 0
+    var startupCheckVersion: Int?
     let revision: String
     init(_ revision: String) { self.revision = revision }
     private let paths = ["/index.html", "/downloads/index.html", "/reader/index.html", "/index.txt", "/downloads/index.txt", "/reader/index.txt", "/_next/static/reader.js"]
@@ -14,10 +15,13 @@ private final class AssetFixture: AssetFetching {
     func assetResponse(_ path: String, maxBytes: Int) async throws -> HTTPResponse {
         if path == "/mobile-assets.json" {
             manifestReads += 1
-            let manifest = AssetManifest(schemaVersion: 1, protocolVersion: 1,
+            if failure == .offline { throw URLError(.notConnectedToInternet) }
+            var manifest = AssetManifest(schemaVersion: 1, protocolVersion: 1,
                 offlineSchemaVersion: failure == .schema ? 3 : 2,
                 buildId: AssetManifest.digest(Data((revision + (failure == .changed && manifestReads > 1 ? "changed" : "")).utf8)),
                 files: paths.map { .init(path: $0, size: bytes($0).count, sha256: AssetManifest.digest(bytes($0)), contentType: "text/plain") })
+            manifest.startupCheckVersion = startupCheckVersion
+            manifest.version = "0.101.0"
             return HTTPResponse(status: 200, headers: ["Content-Type": "application/json"], body: try JSONEncoder().encode(manifest))
         }
         assetReads += 1
@@ -35,6 +39,72 @@ final class CacheUpdateTests {
         let first = try await cache.prepare(client: AssetFixture("first")) { _, _ in }
         try await cache.confirm(first)
         return (cache, first)
+    }
+
+    @Test func automaticLaunchChecksWithoutDownloadingUnchangedAssets() async throws {
+        let cache = AssetCache(root: root)
+        let remote = AssetFixture("first")
+        let first = try await cache.prepareForLaunch(client: remote) { _, _ in }
+        #expect(remote.assetReads == 7)
+        try await cache.confirm(first.ui)
+        let unchanged = AssetFixture("first")
+        let next = try await cache.prepareForLaunch(client: unchanged) { _, _ in }
+        #expect(next.ui.directory == first.ui.directory)
+        #expect(unchanged.manifestReads == 1)
+        #expect(unchanged.assetReads == 0)
+        #expect(next.ui.manifest.displayVersion == "0.101.0")
+        let changed = AssetFixture("second")
+        let update = try await cache.prepareForLaunch(client: changed) { _, _ in }
+        #expect(update.ui.manifest.buildId != first.ui.manifest.buildId)
+        #expect(try await cache.previous()?.directory == first.ui.directory)
+        #expect(try await cache.needsConfirmation())
+    }
+
+    @Test func automaticFailuresUseSavedUIButDoNotHideCancellation() async throws {
+        let (cache, first) = try await baseline()
+        for failure in [AssetFixture.Failure.offline, .interrupted, .corrupt, .changed, .schema] {
+            let remote = AssetFixture("second"); remote.failure = failure
+            let result = try await cache.prepareForLaunch(client: remote) { _, _ in }
+            #expect(result.ui.directory == first.directory)
+            #expect(result.updateFailed == (failure != .offline && failure != .interrupted))
+            #expect(try await cache.load()?.directory == first.directory)
+        }
+        let cancelled = AssetFixture("second"); cancelled.failure = .cancelled
+        do { _ = try await cache.prepareForLaunch(client: cancelled) { _, _ in }; Issue.record("Swallowed cancellation") }
+        catch is CancellationError {} catch { Issue.record("Unexpected error: \(error)") }
+        let missing = AssetCache(root: root.appendingPathComponent("missing"))
+        let offline = AssetFixture("first"); offline.failure = .offline
+        do { _ = try await missing.prepareForLaunch(client: offline) { _, _ in }; Issue.record("Invented an offline cache") }
+        catch is URLError {} catch { Issue.record("Unexpected error: \(error)") }
+    }
+
+    @Test func unconfirmedStartupRollsBackAndSkipsRejectedBuildUntilHostChanges() async throws {
+        let (cache, first) = try await baseline()
+        let broken = AssetFixture("broken"); broken.startupCheckVersion = 1
+        _ = try await cache.prepareForLaunch(client: broken) { _, _ in }
+        let restarted = AssetCache(root: root)
+        let same = AssetFixture("broken"); same.startupCheckVersion = 1
+        let result = try await restarted.prepareForLaunch(client: same) { _, _ in }
+        #expect(result.ui.directory == first.directory)
+        #expect(same.assetReads == 0)
+        #expect(try await restarted.needsConfirmation() == false)
+        let fixed = AssetFixture("fixed"); fixed.startupCheckVersion = 1
+        let update = try await restarted.prepareForLaunch(client: fixed) { _, _ in }
+        #expect(update.ui.manifest.buildId != first.manifest.buildId)
+        try await restarted.confirm(update.ui)
+        let noCheck = AssetFixture("never-requested"); noCheck.failure = .offline
+        let restored = try await restarted.prepareForLaunch(client: noCheck, checkForUpdates: false) { _, _ in }
+        #expect(restored.ui.directory == update.ui.directory)
+        #expect(noCheck.manifestReads == 0)
+    }
+
+    @Test func damagedCacheCanBeRepairedFromSameHostBuild() async throws {
+        let (cache, first) = try await baseline()
+        try Data("damaged".utf8).write(to: first.directory.appendingPathComponent("index.html"))
+        let repaired = try await cache.prepareForLaunch(client: AssetFixture("first")) { _, _ in }
+        #expect(repaired.ui.directory != first.directory)
+        #expect(repaired.ui.manifest == first.manifest)
+        #expect(try await cache.load()?.directory == repaired.ui.directory)
     }
 
     @Test func freshProfileDirectoryWithoutTrailingSlashCanActivateOnlyItsOwnUI() async throws {

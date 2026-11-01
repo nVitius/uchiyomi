@@ -12,8 +12,10 @@ const types = {
   '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf',
 };
 const hash = data => createHash('sha256').update(data).digest('hex');
+const packageVersion = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version;
 
-export async function createManifest(root) {
+export async function createManifest(root, { version = packageVersion } = {}) {
+  if (typeof version !== 'string' || version.length > 80 || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error('Invalid app version');
   const files = [];
   async function walk(relative = '') {
     for (const entry of (await readdir(resolve(root, relative), { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name, 'en'))) {
@@ -31,7 +33,7 @@ export async function createManifest(root) {
   for (const path of ['/index.html', '/downloads/index.html', '/reader/index.html', '/index.txt', '/downloads/index.txt', '/reader/index.txt']) {
     if (!files.some(file => file.path === path)) throw new Error(`Missing offline route: ${path}`);
   }
-  const body = { schemaVersion: 1, protocolVersion: 1, offlineSchemaVersion: 2, startupCheckVersion: 1, files };
+  const body = { schemaVersion: 1, protocolVersion: 1, offlineSchemaVersion: 2, startupCheckVersion: 1, version, files };
   return { ...body, buildId: hash(JSON.stringify(body)) };
 }
 

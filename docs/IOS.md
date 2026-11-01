@@ -8,7 +8,7 @@ Use an HTTPS **origin** with a certificate trusted by iOS, for example `https://
 
 A compatible server must serve `/mobile-assets.json` publicly as JSON on the same origin. The normal `npm --prefix web run build` now creates this inventory automatically. Both `Dockerfile.aio` and the split web/nginx build include it. Existing upstream releases without this patch cannot prepare the app yet.
 
-The inventory specifies protocol **1**, offline storage schema **2**, every static export asset, byte sizes, hashes, and a deterministic build ID. It includes reader route documents, Next route payloads, and lazy chunks. New builds also acknowledge successful startup. Keep frontend and backend versions matched; do not deploy the current export over an older backend. See [Docker prototype deployment](../ios/DOCKER-PROTOTYPE.md) for a reversible version-matched static mount.
+The inventory specifies protocol **1**, offline storage schema **2**, the readable web package `version`, every static export asset, byte sizes, hashes, and a deterministic content `buildId`. It includes reader route documents, Next route payloads, and lazy chunks. New builds also acknowledge successful startup. Keep frontend and backend versions matched; do not deploy the current export over an older backend. See [Docker prototype deployment](../ios/DOCKER-PROTOTYPE.md) for a reversible version-matched static mount.
 
 ## First use
 
@@ -23,11 +23,15 @@ Safari/PWA storage is separate and is not imported. Signing out or expiration of
 
 ## Servers and recovery
 
-The reader's **… → Servers** menu switches saved profiles or adds another server. Each has a persistent WebKit store, local address, UI cache, and cookie jar. Switching stops the old web view and its requests. Selecting an existing profile preserves its downloads.
+The reader's **… → Servers** opens a dedicated Uchiyomi-themed page to select saved profiles, add a server, or remove one. Each has a persistent WebKit store, local address, UI cache, and cookie jar. Switching stops the old web view and its requests. Selecting an existing profile preserves its downloads.
 
 The trash button requires confirmation. Removal deletes that server's **local** session, downloaded chapters, cached app, and unsynced progress. It does not delete the remote library or another profile. Reconnect first if you need pending progress synced.
 
-**Check for reader updates** downloads a separate verified generation while the current reader stays open. **Apply update** activates it and reopens the current location. The previous confirmed version is retained. Failed startup offers **Restore previous reader** or **Download reader again**. These operations replace only UI files, preserving chapters, identity, and queued progress. Unsupported protocol/storage schema changes are refused; the wrapper does not downgrade an offline database. Older compatible UI without a startup acknowledgement asks you to confirm that it opened correctly.
+The app checks `/mobile-assets.json` automatically on a full launch and whenever a server is selected. An unchanged inventory reuses the verified cache. A changed version/build downloads to a separate generation with a themed progress page, verifies every file and the final inventory, then opens Home. Foreground resume keeps the current reader and does not replace the UI while reading. The menu contains only **Servers** and **Reload**; chapter downloads remain in the web app.
+
+An unavailable server or failed update uses the last working cache. The manifest check has a five-second request timeout. The previous confirmed UI is retained; if the new UI fails to acknowledge startup within 30 seconds, the app automatically restores it. An unconfirmed updated UI also rolls back on the next launch. The rejected build is skipped until the host publishes another build ID. **Try again** and **Restore previous version** appear when recovery needs attention. UI replacement preserves chapters, identity, cookies and queued progress. Unsupported protocol/storage schema changes are refused; the wrapper does not downgrade an offline database.
+
+Older compatible manifests without `version` remain supported through their build ID. The readable version comes from the host's `web/package.json`; changing either it or the asset contents changes the build ID. Older UI without a startup acknowledgement still asks you to confirm that it opened correctly. A first download with no working fallback requires a connection to retry if it fails.
 
 ## Developer installation
 
@@ -151,13 +155,32 @@ The BFF CI runner creates a separate disposable database for each test file. Run
 Run the real frontend WebKit suite on an installed simulator, keeping default signing for Keychain access:
 
 ```sh
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
-  -project ios/Uchiyomi.xcodeproj -scheme Uchiyomi -configuration Debug \
-  -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=27.2' \
-  -derivedDataPath ios/build/SimulatorTests test
+npm --prefix web ci
+npm --prefix web run build
+UCHI_SIMULATOR_DEVICE_TYPE=com.apple.CoreSimulator.SimDeviceType.iPhone-Duo \
+  DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  bash ios/scripts/test-webview.sh ios/build/SimulatorTests
 ```
 
-WebKit fixtures verify offline reader routes, data after UI update/broken startup/rollback, and two servers with identical user/chapter IDs. Reader lifecycle tests also exercise overlapping server actions and callbacks from retired web views. Test resources are only in the test bundle, never the packaged app. Simulator checks do not establish physical cold-launch, reboot, or signing behavior.
+The script creates a disposable simulator matching the selected SDK, or uses `UCHI_SIMULATOR_ID` without deleting it. It bundles the real web download store into **test resources only** for interrupted-transfer checks. Those fixtures are never packaged in the IPA. Direct `xcodebuild test` also requires `node ios/scripts/prepare-webview-fixture.mjs` after installing web dependencies.
+
+WebKit tests cover offline reader routes, interrupted chapter cleanup/retry, expired identity, account boundaries and sign-out, automatic UI update/broken startup/rollback with retained chapters and outbox, and two servers with identical user/chapter IDs. Lifecycle tests exercise cold Home startup versus foreground resume, overlapping server actions, and callbacks from retired views. Normal app startup is suppressed while XCTest owns the process, so test models cannot collide with its listener.
+
+`testNativeUpgradeRetentionFixture` is an opt-in installation check. On a disposable simulator with an empty app catalog, put `prepare` (without a newline) in the app's `Documents/native-upgrade-phase.txt` and run that test. It seeds two server profiles, fake Keychain cookies, chapter blobs, offline identity, a saved position and unsynced progress. Install/open the previous **simulator** app with the same bundle ID without uninstalling, change the marker to `verify`, then run the test with the new executable. It compares the catalog and checks retained credentials, identity, chapter data, position and outbox. Normal CI skips this installation-only case. Simulator installation does not establish Apple provisioning, AltStore re-signing or physical-device behavior.
+
+### Simulator acceptance — 2026-11-01
+
+An isolated iPhone Duo simulator (iOS 27.2, Xcode 27.2) passed eight real WebKit/lifecycle cases, including the opt-in native installation check. The ordinary CI suite runs seven cases and skips that opt-in check. Evidence: `ios/build/automatic-update-release-check/tests.xcresult`.
+
+- Automatic manifest checks, unchanged-cache reuse, changed UI activation, failed-startup rollback and rejection of the same bad build passed with the real frontend, chapter blobs and queued progress retained. Foreground resume did not check or replace the UI.
+- Interrupted chapter cleanup and retry, expired offline identity, account switching and sign-out passed. Auth boundaries recreate the reader to avoid racing frontend navigation.
+- Installing the prior Home-startup simulator executable and then the new executable without uninstalling retained two profiles, a fixture Keychain cookie, offline identity, both chapters, position and unsynced outbox. This was a simulator executable update, not an AltStore IPA or Apple provisioning test.
+- Visually checked the themed Servers page, selected server, add/switch, removal confirmation/cancel, full inner/outer display layouts, rotation, keyboard dismissal on Connect, connection error and foreground restoration. The menu contains Servers and Reload. Screenshots: `ios/build/automatic-update-servers-inner.png` and `ios/build/automatic-update-loading.png`.
+- Native core reports 25 cases (one gated TOTP skip); manifest 5/5, distribution 22/22, and focused offline/native web tests 43/43 pass. External-link handoff remains unverified: Device Hub exposes no web link controls and coordinate input fails; an attempted hosted-test handoff could not complete. No Safari success is inferred.
+
+The existing v0.101.0 host already publishes a content build ID, which is sufficient for automatic checks. A version-matched, metadata-only manifest adding readable `version: "0.101.0"` is staged with all 180 assets unchanged. Deployment is pending because Podman cannot inspect the running container (`pthread_create: Resource temporarily unavailable`). The live service has not been restarted. Do not replace its frontend with this repository's newer v0.103.1 export.
+
+These simulator results supplement the device evidence below. Physical lifecycle/link edge cases, cached UI update/recovery and direct developer-channel update with unsynced progress remain open.
 
 ### Device evidence and remaining acceptance
 
