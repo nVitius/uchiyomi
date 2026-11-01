@@ -13,10 +13,19 @@ def gh(*arguments):
 
 
 def find_release(repository, tag):
-    # The tag endpoint excludes drafts. Authenticated listing includes them and
-    # also keeps authentication/network errors distinct from a missing release.
-    pages = json.loads(gh('api', '--paginate', '--slurp', f'repos/{repository}/releases?per_page=100'))
-    return next((r for page in pages for r in page if r['tag_name'] == tag), None)
+    # Resolve pending draft tags the same way as `gh release view`: GraphQL for
+    # identity, then a direct REST read for current assets. The tag REST endpoint
+    # excludes drafts, and release listings can lag after creation or uploads.
+    owner, name = repository.split('/')
+    query = ('query($owner: String!, $name: String!, $tag: String!) {'
+             ' repository(owner: $owner, name: $name) {'
+             ' release(tagName: $tag) { databaseId } } }')
+    result = json.loads(gh('api', 'graphql', '-f', 'query='+query,
+                          '-f', 'owner='+owner, '-f', 'name='+name, '-f', 'tag='+tag))
+    release = result['data']['repository']['release']
+    if release is None:
+        return None
+    return json.loads(gh('api', f"repos/{repository}/releases/{release['databaseId']}"))
 
 
 def release_assets(release, record):

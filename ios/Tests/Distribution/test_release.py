@@ -14,7 +14,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT/'ios/scripts'))
 from release_lib import inspect_payload, make_source, tag_version, validate_record, verify_ipa
-from github_release import fetch_records, release_assets, verify_existing_files
+from github_release import fetch_records, find_release, release_assets, verify_existing_files
 
 
 class ReleaseTests(unittest.TestCase):
@@ -174,13 +174,19 @@ class ReleaseTests(unittest.TestCase):
                 def fake_gh(*args):
                     nonlocal release
                     if args[0] == 'api':
+                        if args[1] == 'graphql':
+                            return json.dumps({'data': {'repository': {'release':
+                                {'databaseId': release['id']} if release is not None else None}}})
+                        # A newly created draft may be missing from the release
+                        # listing even though direct reads already work.
+                        if '/releases?per_page=100' in args[-1]:
+                            return json.dumps([[]])
                         # GitHub's tag endpoint only returns published releases.
                         if '/releases/tags/' in args[-1] and release['draft']:
                             raise subprocess.CalledProcessError(1, args, stderr='HTTP 404')
-                        self.assertIn('/releases?per_page=100', args[-1])
-                        if release is not None:
-                            release['assets'] = [{'name': name, 'size': len(data)} for name, data in assets.items()]
-                        return json.dumps([[release] if release is not None else []])
+                        self.assertEqual(args[-1], 'repos/example/reader/releases/42')
+                        release['assets'] = [{'name': name, 'size': len(data)} for name, data in assets.items()]
+                        return json.dumps(release)
                     action = args[1]
                     if action == 'create':
                         self.assertIsNone(release)
@@ -215,6 +221,13 @@ class ReleaseTests(unittest.TestCase):
                 self.assertFalse(release['draft'])
                 self.assertEqual(set(uploads), names-({self.ipa.name} if partial else set()))
                 self.assertEqual(len(uploads), len(set(uploads)))
+
+    def test_draft_lookup_distinguishes_absence_from_api_failure(self):
+        with patch('github_release.gh', return_value=json.dumps({'data': {'repository': {'release': None}}})):
+            self.assertIsNone(find_release('example/reader', 'ios-v0.1.0-beta.1'))
+        with patch('github_release.gh', side_effect=RuntimeError('API unavailable')):
+            with self.assertRaisesRegex(RuntimeError, 'API unavailable'):
+                find_release('example/reader', 'ios-v0.1.0-beta.1')
 
     def test_network_failure_does_not_turn_into_an_empty_feed(self):
         with patch('github_release.gh', side_effect=RuntimeError('network unavailable')):

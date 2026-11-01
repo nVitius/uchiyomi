@@ -108,6 +108,8 @@ Each publishing fork must verify its hosted Xcode build and GitHub Release/Pages
 
 The testing fork is [nVitius/uchiyomi](https://github.com/nVitius/uchiyomi). Use its [iOS beta workflow](https://github.com/nVitius/uchiyomi/actions/workflows/ios-release.yml) for manual builds and its [releases](https://github.com/nVitius/uchiyomi/releases) for published IPAs. Its configured AltStore source is `https://nvitius.github.io/uchiyomi/altstore.json`, populated after a successful iOS tag release. Test betas keep device and AltStore acceptance marked pending until installation/update checks are recorded.
 
+The first public test release is [0.1.0 (1005), beta 3](https://github.com/nVitius/uchiyomi/releases/tag/ios-v0.1.0-beta.3). Its [hosted build, release and Pages jobs](https://github.com/nVitius/uchiyomi/actions/runs/41290404805) passed; the public IPA, checksum, metadata, feed, icon and landing page were independently downloaded and verified. Publication required one retry because GitHub's draft listing lagged; subsequent publisher code resolves draft identity directly through GraphQL and reads assets by release ID. Source-based phone installation and update acceptance remain pending.
+
 References: [AltStore source format](https://faq.altstore.io/developers/make-a-source), [version ordering](https://faq.altstore.io/developers/updating-apps), [GitHub Pages workflows](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
 
 ## AltStore Classic
