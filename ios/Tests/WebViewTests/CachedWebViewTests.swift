@@ -123,12 +123,12 @@ final class CachedWebViewTests: XCTestCase {
         defer { window.isHidden = true; window.rootViewController = nil; try? FileManager.default.removeItem(at: root) }
         do {
             await model.restore()
-            let firstWeb = try XCTUnwrap(model.webView)
-            try await waitFor(firstWeb, "!!document.querySelector('input[type=password]')")
-            _ = try await firstWeb.callAsyncJavaScript(Self.seed, arguments: [:], in: nil, contentWorld: .page)
-            firstWeb.reload()
+            var firstWeb: WKWebView? = try XCTUnwrap(model.webView)
+            try await waitFor(firstWeb!, "!!document.querySelector('input[type=password]')")
+            _ = try await firstWeb!.callAsyncJavaScript(Self.seed, arguments: [:], in: nil, contentWorld: .page)
+            firstWeb!.reload()
             _ = try await waitForReader()
-            _ = try await firstWeb.callAsyncJavaScript("""
+            _ = try await firstWeb!.callAsyncJavaScript("""
                 const db = await new Promise((resolve,reject)=>{const r=indexedDB.open('yomi-offline',2);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)});
                 const tx=db.transaction('outbox','readwrite');
                 tx.objectStore('outbox').put({id:999,userId:'ios-fixture',bookId:'fixture-2',seriesId:'fixture-series',deviceId:'ios-test',page:2,completed:false,ts:1700000000000,tries:0});
@@ -137,14 +137,18 @@ final class CachedWebViewTests: XCTestCase {
             let second = try ExportFixture(directory: export, revision: "second")
             second.assetDelay = 5_000_000
             remote = second
-            firstWeb.load(URLRequest(url: URL(string: "/reader/?book=fixture-2", relativeTo: profile.localOrigin)!.absoluteURL))
-            try await waitFor(firstWeb, "location.pathname === '/reader/' && Array.from(document.images).some(i=>i.src.startsWith('blob:') && i.complete && i.naturalWidth>0)")
-            _ = try await firstWeb.evaluateJavaScript("window.updateReadingMarker = 42; true")
+            firstWeb!.load(URLRequest(url: URL(string: "/reader/?book=fixture-2", relativeTo: profile.localOrigin)!.absoluteURL))
+            try await waitFor(firstWeb!, "location.pathname === '/reader/' && Array.from(document.images).some(i=>i.src.startsWith('blob:') && i.complete && i.naturalWidth>0)")
+            _ = try await firstWeb!.evaluateJavaScript("window.updateReadingMarker = 42; true")
             await model.resume()
             XCTAssertEqual(second.manifestReads, 0, "Foregrounding unexpectedly checked for updates")
             XCTAssertTrue(model.webView === firstWeb)
-            let marker = try await firstWeb.evaluateJavaScript("window.updateReadingMarker") as? Int
+            let marker = try await firstWeb!.evaluateJavaScript("window.updateReadingMarker") as? Int
             XCTAssertEqual(marker, 42, "A host update replaced the active reading document")
+            // The test must release the retired reader just as the real UI does.
+            // stopLoading() alone leaves its document and JavaScript alive.
+            weak var retiredInitialReader = firstWeb
+            firstWeb = nil
             let selecting = Task { await model.choose(profile) }
             for _ in 0..<200 {
                 if (model.downloadProgress ?? 0) > 0 { break }
@@ -156,6 +160,7 @@ final class CachedWebViewTests: XCTestCase {
             let loading = XCTAttachment(image: window.screen.screenshotForTest(window: window))
             loading.name = "Automatic update loading page"; loading.lifetime = .keepAlways; add(loading)
             await selecting.value
+            XCTAssertNil(retiredInitialReader, "The fixture retained the old reader across a UI update")
             _ = try await waitForReader()
             for _ in 0..<100 {
                 if try await cache.needsConfirmation() == false { break }
