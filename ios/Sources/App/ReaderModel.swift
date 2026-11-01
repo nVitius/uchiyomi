@@ -128,7 +128,8 @@ final class ReaderModel: ObservableObject {
             serverName = selected.origin.host ?? "Uchiyomi"
             webView = view
             addingServer = false; showingServers = false
-            view.load(URLRequest(url: location ?? selected.localOrigin.appendingPathComponent("downloads/")))
+            // Start at the web app's home page; its auth state handles offline fallback.
+            view.load(URLRequest(url: location ?? selected.localOrigin))
             if pending && ui.manifest.startupCheckVersion == 1 {
                 startupTask = Task { [weak self, weak view] in
                     do { try await Task.sleep(nanoseconds: 30_000_000_000) } catch { return }

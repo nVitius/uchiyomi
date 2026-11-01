@@ -17,6 +17,8 @@ The inventory specifies protocol **1**, offline storage schema **2**, every stat
 3. Download chapters using Uchiyomi's existing offline controls. Wait for each download to finish before going offline.
 4. Open Downloads to read offline. The native app can cold-launch without the server after preparation. Progress queues locally and syncs to its original account after reconnecting.
 
+A full restart opens Uchiyomi's home page. If the server is unavailable, the web app uses the saved offline identity to open Downloads. Returning from the background keeps the current screen. Chapter progress remains saved and is used when you choose that chapter again.
+
 Safari/PWA storage is separate and is not imported. Signing out or expiration of the offline identity requires another online sign-in before reading that account's downloads. Removing the app or OS removal of website data can remove local chapters; the server remains the library's durable copy. Network transfers and progress sync resume in the foreground; background downloading and native push notifications are not implemented.
 
 ## Servers and recovery

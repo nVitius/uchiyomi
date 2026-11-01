@@ -50,8 +50,10 @@ final class CachedWebViewTests: XCTestCase {
             try await gateway.start()
             web = try await NativeWebView.make(profile: profile, policy: gateway.policy)
             mount(web!)
-            web!.load(URLRequest(url: profile.localOrigin.appendingPathComponent("downloads/")))
-            try await waitFor(web!, "document.body.innerText.includes('Offline fixture')")
+            // Cold launches enter through Home. The real frontend must reach downloads
+            // itself when the upstream is unavailable and the saved identity is valid.
+            web!.load(URLRequest(url: profile.localOrigin))
+            try await waitFor(web!, "location.pathname === '/downloads/' && document.body.innerText.includes('Offline fixture')")
             let registrations = try await web!.callAsyncJavaScript("return (await navigator.serviceWorker.getRegistrations()).length", arguments: [:], in: nil, contentWorld: .page) as? Int
             XCTAssertEqual(registrations, 0, "The native host registered a service worker")
             // Both reader routes/chunks have never been visited. The upstream port refuses connections.

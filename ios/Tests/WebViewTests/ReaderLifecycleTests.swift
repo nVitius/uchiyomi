@@ -4,6 +4,54 @@ import WebKit
 
 @MainActor
 final class ReaderLifecycleTests: XCTestCase {
+    private func waitForPath(_ model: ReaderModel, _ path: String) async throws {
+        let view = try XCTUnwrap(model.webView)
+        for _ in 0..<100 {
+            if (try? await view.evaluateJavaScript("document.readyState === 'complete' && location.pathname === '\(path)'")) as? Bool == true { return }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        throw ClientError.invalid("The reader did not reach \(path).")
+    }
+
+    func testColdLaunchStartsAtHomeWhileResumeKeepsCurrentPage() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = ProfileStore(root: root)
+        let profile = try store.profile(for: URL(string: "https://127.0.0.1:9")!, in: .init())
+        try store.save(.init(profiles: [profile], selectedID: profile.id))
+        let cache = AssetCache(root: store.directory(for: profile).appendingPathComponent("ui"))
+        let ui = try await cache.prepare(client: ReaderFixture()) { _, _ in }
+        try await cache.confirm(ui)
+        var model = ReaderModel(root: root)
+        do {
+            await model.restore()
+            try await waitForPath(model, "/")
+            model.webView?.load(URLRequest(url: URL(string: "/reader/?book=fixture-1", relativeTo: profile.localOrigin)!.absoluteURL))
+            try await waitForPath(model, "/reader/")
+            await model.resume()
+            try await waitForPath(model, "/reader/")
+
+            // Release the view/listener and create a new model from persisted state,
+            // as a process restart does. A previous reader URL must not be restored.
+            await model.addServer()
+            model = ReaderModel(root: root)
+            await model.restore()
+            try await waitForPath(model, "/")
+            XCTAssertEqual(model.selectedID, profile.id)
+            let query = try await model.webView?.evaluateJavaScript("location.search") as? String
+            XCTAssertEqual(query, "")
+        } catch {
+            await model.addServer()
+            try? KeychainCookieVault(profileID: profile.id).remove()
+            try? await removeFixtureStore(profile.id)
+            try? FileManager.default.removeItem(at: root)
+            throw error
+        }
+        await model.addServer()
+        try KeychainCookieVault(profileID: profile.id).remove()
+        try await removeFixtureStore(profile.id)
+        try FileManager.default.removeItem(at: root)
+    }
+
     private func removeFixtureStore(_ id: UUID) async throws {
         // A fresh simulator can retain WebKit's network process after the view is gone.
         // The app exposes retry on removal failure; fixture teardown waits for that same
