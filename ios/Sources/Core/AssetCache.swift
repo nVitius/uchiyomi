@@ -137,7 +137,10 @@ actor AssetCache {
         return PreparedUI(directory: destination, manifest: manifest)
     }
     func activate(_ ui: PreparedUI) throws {
-        guard ui.directory.deletingLastPathComponent().standardizedFileURL.path == root.path else {
+        // Resolve both paths after staging has created the directory. iOS can expose
+        // the same container through /var and /private/var, including temporary roots.
+        guard ui.directory.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL.path
+                == root.resolvingSymlinksInPath().standardizedFileURL.path else {
             throw ClientError.invalid("The app download does not belong to this server.")
         }
         let key = ui.directory.lastPathComponent

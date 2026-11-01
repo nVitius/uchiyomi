@@ -127,6 +127,22 @@ final class CacheUpdateTests {
         #expect(try await restarted.load()?.directory == ui.directory)
     }
 
+    @Test func cacheDirectoryAliasCanActivateOnlyItsOwnGeneration() async throws {
+        let fm = FileManager.default
+        let target = root.appendingPathComponent("real", isDirectory: true)
+        let alias = root.appendingPathComponent("alias", isDirectory: true)
+        try fm.createDirectory(at: target, withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: alias, withDestinationURL: target)
+        let cache = AssetCache(root: alias.appendingPathComponent("ui", isDirectory: true))
+        let staged = try await cache.stage(client: AssetFixture("aliased")) { _, _ in }
+        let canonical = PreparedUI(directory: staged.directory.resolvingSymlinksInPath(), manifest: staged.manifest)
+        try await cache.activate(canonical)
+        try await cache.confirm(canonical)
+        #expect(try await cache.load()?.manifest == staged.manifest)
+        let other = AssetCache(root: target.appendingPathComponent("another-profile", isDirectory: true))
+        do { try await other.activate(canonical); Issue.record("Accepted another profile's UI through an alias") } catch {}
+    }
+
     @Test func updateKeepsEachGenerationCoherentAndRecoversAfterRestart() async throws {
         let (cache, first) = try await baseline()
         let next = try await cache.stage(client: AssetFixture("second")) { _, _ in }
