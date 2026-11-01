@@ -9,4 +9,4 @@ The **[iOS beta workflow](../.github/workflows/ios-release.yml)** builds an IPA 
 - [PROTOTYPE.md](PROTOTYPE.md): the original physical-device acceptance evidence.
 - [DOCKER-PROTOTYPE.md](DOCKER-PROTOTYPE.md): reversible deployment of a version-matched frontend to an existing Docker/Podman server.
 
-This branch is a test candidate, not an App Store release. Build 2 passed the initial direct-install/offline/reboot checks; new candidate builds and AltStore require their own acceptance run.
+This branch is a beta candidate, not an App Store release. The implementation plan's physical acceptance is complete across the recorded developer and AltStore builds, including offline reboot and update continuity. See the verification history for exact artifacts and results; each later binary retains its own acceptance status.

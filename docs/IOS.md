@@ -1,6 +1,6 @@
 # Uchiyomi for iPhone
 
-The iOS client is a native SwiftUI/WebKit wrapper for your chosen Uchiyomi server. It downloads and verifies the server's web app for offline launch; the IPA contains only the native client. Minimum iOS: 17. This branch is a **test candidate**. AltStore installation and update continuity have passed; the remaining physical checks are listed below.
+The iOS client is a native SwiftUI/WebKit wrapper for your chosen Uchiyomi server. It downloads and verifies the server's web app for offline launch; the IPA contains only the native client. Minimum iOS: 17. This branch is a **beta candidate**. Physical acceptance is complete for both installation channels on the builds recorded below; that evidence does not automatically verify every later binary.
 
 ## Compatible server
 
@@ -27,7 +27,7 @@ The reader's **… → Servers** opens a dedicated Uchiyomi-themed page to selec
 
 The trash button requires confirmation. Removal deletes that server's **local** session, downloaded chapters, cached app, and unsynced progress. It does not delete the remote library or another profile. Reconnect first if you need pending progress synced.
 
-The app checks `/mobile-assets.json` automatically on a full launch and whenever a server is selected. An unchanged inventory reuses the verified cache. A changed version/build downloads to a separate generation with a themed progress page, verifies every file and the final inventory, then opens Home. Foreground resume keeps the current reader and does not replace the UI while reading. The menu contains only **Servers** and **Reload**; chapter downloads remain in the web app.
+The app checks `/mobile-assets.json` automatically on a full launch and whenever a server is selected. An unchanged inventory reuses the verified cache. A changed version/build downloads to a separate generation with a themed progress page, verifies every file and the final inventory, then opens Home. Foreground resume keeps the current reader and does not replace the UI while reading. The active server hostname appears as the menu heading above **Servers** and **Reload**. The reader toolbar has no persistent hostname; chapter downloads remain in the web app.
 
 An unavailable server or failed update uses the last working cache. The manifest check has a five-second request timeout. The previous confirmed UI is retained; if the new UI fails to acknowledge startup within 30 seconds, the app automatically restores it. An unconfirmed updated UI also rolls back on the next launch. The rejected build is skipped until the host publishes another build ID. **Try again** and **Restore previous version** appear when recovery needs attention. UI replacement preserves chapters, identity, cookies and queued progress. Unsupported protocol/storage schema changes are refused; the wrapper does not downgrade an offline database.
 
@@ -172,6 +172,8 @@ UCHI_SIMULATOR_DEVICE_TYPE=com.apple.CoreSimulator.SimDeviceType.iPhone-Duo \
 
 The script creates a disposable simulator matching the selected SDK, or uses `UCHI_SIMULATOR_ID` without deleting it. It bundles the real web download store into **test resources only** for interrupted-transfer checks. Those fixtures are never packaged in the IPA. Direct `xcodebuild test` also requires `node ios/scripts/prepare-webview-fixture.mjs` after installing web dependencies.
 
+The authentication boundary case runs in a separate test-host process after the other cases. Hosted WebKit intermittently stalled its initial sign-in setup after the update/recovery fixture's repeated process replacements. Both invocations are required, without automatic retries: `tests.xcresult` holds the other cases and `auth.xcresult` holds authentication. CI preserves both bundles on failure. This isolates fixture state; it does not establish the underlying WebKit cause or change production behavior.
+
 WebKit tests cover offline reader routes, interrupted chapter cleanup/retry, expired identity, account boundaries and sign-out, automatic UI update/broken startup/rollback with retained chapters and outbox, and two servers with identical user/chapter IDs. Lifecycle tests exercise cold Home startup versus foreground resume, overlapping server actions, and callbacks from retired views. Normal app startup is suppressed while XCTest owns the process, so test models cannot collide with its listener.
 
 `testNativeUpgradeRetentionFixture` is an opt-in installation check. On a disposable simulator with an empty app catalog, put `prepare` (without a newline) in the app's `Documents/native-upgrade-phase.txt` and run that test. It seeds two server profiles, fake Keychain cookies, chapter blobs, offline identity, a saved position and unsynced progress. Install/open the previous **simulator** app with the same bundle ID without uninstalling, change the marker to `verify`, then run the test with the new executable. It compares the catalog and checks retained credentials, identity, chapter data, position and outbox. Normal CI skips this installation-only case. Simulator installation does not establish Apple provisioning, AltStore re-signing or physical-device behavior.
@@ -210,7 +212,7 @@ The first hosted attempt (`ios-v0.1.0-beta.7`, run `41296633859`) passed automat
 
 [0.1.0 (1010), beta 8](https://github.com/nVitius/uchiyomi/releases/tag/ios-v0.1.0-beta.8) publishes the themed Servers/loading pages and automatic updates. Its [hosted build, release and Pages jobs](https://github.com/nVitius/uchiyomi/actions/runs/41298474024) all passed, including seven enabled WebKit/lifecycle cases and one opt-in installation-test skip. Independent downloads verify the IPA, checksum, metadata, complete AltStore source history, icon and landing page. The actual executable links against iOS 27.1 with deployment minimum 17.0. Source: `7250830f07466910302ac4e382a7dba1cbafd5be`; IPA SHA-256: `8dffcb9678fed184734ef04cc92916751087e1acffc134bf587eadcae62bb384`; size: 908051 bytes. Evidence: `ios/build/fork-release-verification-beta8.json` and `ios/build/fork-beta8-hosted-build.log`. The release is available through the existing AltStore source. Physical acceptance of this build is pending; immutable device/AltStore verification flags remain false.
 
-These simulator results supplement the device evidence below. Physical lifecycle/link edge cases, cached UI update/recovery and direct developer-channel update with unsynced progress remain open.
+At that checkpoint, physical lifecycle/link edge cases, cached UI update/recovery and a direct developer-channel update with unsynced progress remained open. Those checks are now complete, as recorded below.
 
 ### Version publication and final test preparation — 2026-11-01
 
@@ -220,7 +222,7 @@ The expanded real-WebKit update test also passes on the isolated Duo/iOS 27.2 si
 
 External-link handoff also passed a manual simulator check. Clicking the disposable navigation fixture's `target="_blank"` link opened `https://example.com/` in Safari; returning through Home and the Uchiyomi icon restored the usable native shell and fixture. Device Hub coordinate input worked on this attempt. Evidence: `ios/build/external-link-simulator-verification.json`, `external-link-safari.png` and `external-link-return.png`. This establishes simulator Safari handoff and return only; physical handoff and chapter-position retention across that handoff remain open in task 4.5.
 
-### Device evidence and remaining acceptance
+### Device acceptance evidence
 
 Direct developer builds **1–2**, iPhone Duo / iOS 27.2, version-matched Uchiyomi v0.101.0 frontend/backend:
 
@@ -239,7 +241,7 @@ AltStore source builds **1005–1007**, on the same phone:
 
 AltStore source build **1008**: the user confirms a full online restart from a chapter opens Home, while an offline restart reaches Downloads and opens the saved chapter at its retained position.
 
-**Build 5 was an earlier candidate.** It prevents overlapping server/update transitions and ignores startup callbacks from retired readers. Subsequent beta work also fixes a profile-switch cancellation crash found by hosted CI; use the newest published beta for testing. Profile/update/transport behavior requires device checks. Real TOTP is verified through the native transport/BFF fixture, not a human phone sign-in. Remaining acceptance includes foreground/rotation/external-link checks, partial downloads, logout/expired identity and account switching on-device, pending-progress retention across a direct developer update, and cached UI update/recovery on the phone. Record the IPA checksum and effective signing identity with each run. Do not label a candidate device-verified from earlier builds' results.
+**Build 5 was an earlier candidate.** It prevents overlapping server/update transitions and ignores startup callbacks from retired readers. Subsequent beta work also fixes a profile-switch cancellation crash found by hosted CI; use the newest published beta for testing. The final physical session below completed foreground/rotation/external-link checks, partial downloads, logout/expired identity and account switching, pending-progress retention across a direct developer update, and cached UI update/recovery. Real TOTP is verified through the native transport/BFF fixture, not a human phone sign-in. Record the IPA checksum and effective signing identity with each run. Do not label a candidate device-verified from earlier builds' results.
 
 ### Physical acceptance completed
 
@@ -252,6 +254,8 @@ The optional native-upgrade seeding XCTest was excluded from the physical fixtur
 See `ios/build/direct-device-acceptance-pair-1014-1015.json` for artifact hashes, clean source, matching identity/entitlements, observed provisioning expiration and actual results. Published release metadata stays immutable; this separate acceptance record does not relabel older binaries.
 
 ## Physical device tests resumed — 2026-11-01
+
+This chronological log retains intermediate failures and pending states. The completed results at the end supersede those checkpoints.
 
 The user confirmed AltStore build 1011 and connected/unlocked the Duo for testing. Read-only inspection confirmed that its effective identity remains `ca.box.nv.uchiyomi.VAAF4FG764`; the separate developer test app uses `ca.box.nv.uchiyomi`.
 
@@ -274,3 +278,12 @@ The user confirms that developer build 1015, reopened with Airplane Mode on/Wi-F
 Final user-confirmed reconnection check passed on developer build 1015: after restoring connectivity and force-quitting/reopening, an undownloaded chapter opens without another sign-in, and the same account in Safari/PWA shows the distinct position saved offline before the 1014 → 1015 update. This completes direct developer update continuity (6.2) and the remaining physical matrix (5.3), alongside the explicitly recorded earlier cold-offline/reboot evidence and current physical fixture cases. **All 36/36 OpenSpec tasks are complete.** Hosted verification of the latest fix is still running in manual workflow 41358308989; final report/spec synchronization/archive will follow that result. The physical acceptance record is `ios/build/direct-device-acceptance-pair-1014-1015.json`; original artifact metadata and historical published-release flags remain unchanged. No further phone interaction is required for these acceptance tasks.
 
 After the physical acceptance session, the user requested moving the persistent server hostname into the context menu. The native reader now has an empty toolbar title and a menu section headed by the active hostname above Servers/Reload. Server-selection and connection/loading screens retain their useful host context. Simulator compilation and visible menu-open/menu-closed verification pass; this presentation-only refinement was not installed on the phone. Evidence: `ios/build/reader-menu-hostname-build.log`, `reader-menu-hostname.png` and `reader-without-hostname.png`.
+
+
+## Final hosted verification follow-up — 2026-11-01
+
+The manual run 41358308989 passed all enabled gates (28 native-core cases with one separately gated TOTP skip, 22 distribution tests, five manifest tests, and nine enabled WebKit/lifecycle cases). The subsequent immutable beta10 tag at 55cab956 failed publication: eight enabled WebKit cases passed, the optional installation case skipped, and the authentication boundary case exceeded its 300-second allowance at initial sign-in after the update/recovery fixture. The complete log, xcresult and timeout spindump were downloaded. The main run loop was responsive while the async case waited; the underlying WebKit cause is unproven. No beta10 release or feed was published.
+
+The test runner now gives authentication a fresh test-host process after the other cases, with every assertion, timeout and both required success statuses retained. CI preserves both result bundles. This is fixture isolation, without automatic retries or production behavior changes. Local and hosted mitigation verification is pending; archive remains pending until the final release checks complete. Evidence: ios/build/beta10-auth-timeout-diagnosis.json and ios/build/beta10-attempt1-diagnostics/WebViewCI/tests.xcresult.
+
+The revised runner passes locally on the isolated Duo/iOS27.2 simulator: eight enabled cases plus the optional installation skip in tests.xcresult, followed by authentication 1/1 in auth.xcresult, in a different app process. All nine required cases ran without retries. Evidence: ios/build/isolated-auth-release-check/{main,auth}-summary.json. ShellCheck, actionlint and diff checks pass. A new immutable beta tag will verify the isolated runner on hosted iOS27.1 before publication.

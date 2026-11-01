@@ -37,10 +37,18 @@ PY
 fi
 xcrun simctl bootstatus "$simulator" -b
 # Keep simulator signing enabled: the Keychain fixture needs it. No Apple team is needed.
-xcodebuild -project ios/Uchiyomi.xcodeproj -scheme Uchiyomi -configuration Debug \
-  -destination "platform=iOS Simulator,id=$simulator" \
-  -derivedDataPath "$output/DerivedData" -resultBundlePath "$output/tests.xcresult" \
-  -test-timeouts-enabled YES -default-test-execution-time-allowance 300 -maximum-test-execution-time-allowance 600 \
-  ONLY_ACTIVE_ARCH=YES \
-  DEVELOPMENT_TEAM= CODE_SIGN_IDENTITY=- PRODUCT_BUNDLE_IDENTIFIER=org.uchiyomi.ci \
-  UCHI_TEST_BUNDLE_IDENTIFIER=org.uchiyomi.ci.tests test 2>&1 | tee "$output/test.log"
+build_args=(-project ios/Uchiyomi.xcodeproj -scheme Uchiyomi -configuration Debug
+  -destination "platform=iOS Simulator,id=$simulator"
+  -derivedDataPath "$output/DerivedData"
+  -test-timeouts-enabled YES -default-test-execution-time-allowance 300 -maximum-test-execution-time-allowance 600
+  ONLY_ACTIVE_ARCH=YES
+  DEVELOPMENT_TEAM= CODE_SIGN_IDENTITY=- PRODUCT_BUNDLE_IDENTIFIER=org.uchiyomi.ci
+  UCHI_TEST_BUNDLE_IDENTIFIER=org.uchiyomi.ci.tests)
+auth_test=UchiyomiWebViewTests/CachedWebViewTests/testExpiredIdentityAccountBoundaryAndOfflineLogout
+# Hosted WebKit can stall starting this fixture after the update/rollback fixture's
+# many process replacements. Give it a fresh test host; neither skip nor retry its
+# assertions. Both invocations must pass, and both result bundles are retained.
+xcodebuild "${build_args[@]}" -resultBundlePath "$output/tests.xcresult" \
+  -skip-testing:"$auth_test" test 2>&1 | tee "$output/test.log"
+xcodebuild "${build_args[@]}" -resultBundlePath "$output/auth.xcresult" \
+  -only-testing:"$auth_test" test-without-building 2>&1 | tee -a "$output/test.log"
