@@ -77,15 +77,17 @@ struct ReaderView: View {
                     ServerConnectionView(model: model)
                 }
             }
-            .navigationTitle(model.webView == nil ? "" : model.serverName)
+            .navigationTitle("")
             .toolbar(model.webView == nil ? .hidden : .visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if model.webView != nil {
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
-                            Button("Servers", systemImage: "server.rack") { model.showingServers = true }
-                            Button("Reload", systemImage: "arrow.clockwise") { Task { await model.reload() } }
+                            Section(model.serverName) {
+                                Button("Servers", systemImage: "server.rack") { model.showingServers = true }
+                                Button("Reload", systemImage: "arrow.clockwise") { Task { await model.reload() } }
+                            }
                         } label: { Image(systemName: "ellipsis.circle") }
                         .disabled(model.busy).accessibilityLabel("Reader menu")
                     }
