@@ -1,6 +1,6 @@
 # Uchiyomi for iPhone
 
-The iOS client is a native SwiftUI/WebKit wrapper for your chosen Uchiyomi server. It downloads and verifies the server's web app for offline launch; the IPA contains only the native client. Minimum iOS: 17. This branch is a **test candidate**, with remaining device and AltStore checks listed below.
+The iOS client is a native SwiftUI/WebKit wrapper for your chosen Uchiyomi server. It downloads and verifies the server's web app for offline launch; the IPA contains only the native client. Minimum iOS: 17. This branch is a **test candidate**. AltStore installation and update continuity have passed; the remaining physical checks are listed below.
 
 ## Compatible server
 
@@ -204,6 +204,12 @@ The first hosted attempt (`ios-v0.1.0-beta.7`, run `41296633859`) passed automat
 
 These simulator results supplement the device evidence below. Physical lifecycle/link edge cases, cached UI update/recovery and direct developer-channel update with unsynced progress remain open.
 
+### Version publication and final test preparation — 2026-11-01
+
+The test host now publishes readable version **0.101.0**, with build ID `f6310f7ee18defae0d793405e9f8164d8f95307fb9bdbd5892f341b9a76358a6`. All 180 frontend assets are unchanged from the previously deployed v0.101.0 build. The backend image, environment, pod, companion containers and persistent mounts were preserved. An initial deployment guard rolled back because `/home` and `/mnt` aliases were reported differently; resolving and checking those paths proved they refer to the same directories. The retry passed. Independent public verification at 20:35:52 UTC checked every asset's hash, size and MIME, the manifest, routes, service worker, health/authentication and JSON API 404. Evidence: `ios/build/live-version-metadata-verification.json`.
+
+The expanded real-WebKit update test also passes on the isolated Duo/iOS 27.2 simulator. It opens a chapter before a host update, verifies foreground resume keeps the same document, then checks interrupted transfers, corrupted bytes and unsupported storage schemas through `ReaderModel`. Each rejected update keeps the confirmed UI, chapter blob, offline identity and original queued progress. The existing bad-startup rollback and rejected-build checks remain enabled. Evidence: `ios/build/remaining-update-matrix.xcresult` (one focused test, zero failures). This supplements the original core failure tests; it is not physical-device evidence.
+
 ### Device evidence and remaining acceptance
 
 Direct developer builds **1–2**, iPhone Duo / iOS 27.2, version-matched Uchiyomi v0.101.0 frontend/backend:
@@ -225,13 +231,17 @@ AltStore source build **1008**: the user confirms a full online restart from a c
 
 **Build 5 was an earlier candidate.** It prevents overlapping server/update transitions and ignores startup callbacks from retired readers. Subsequent beta work also fixes a profile-switch cancellation crash found by hosted CI; use the newest published beta for testing. Profile/update/transport behavior requires device checks. Real TOTP is verified through the native transport/BFF fixture, not a human phone sign-in. Remaining acceptance includes foreground/rotation/external-link checks, partial downloads, logout/expired identity and account switching on-device, pending-progress retention across a direct developer update, and cached UI update/recovery on the phone. Record the IPA checksum and effective signing identity with each run. Do not label a candidate device-verified from earlier builds' results.
 
-### Next phone session
+### Remaining phone session
 
-Record the candidate build/checksum, iOS version, installation channel, effective signing identity, and expiration. Keep the existing app installed. A fresh AltStore identity can have separate data from the Xcode installation.
+The plan is **32/36 complete**. The user will return for physical checks; no phone installation or settings change was made during final test preparation. Record the build/checksum, iOS version, installation channel, effective signing identity and provisioning expiration with each run. Keep the existing AltStore app installed. Use a separate direct developer installation and disposable fixture profiles for account expiry, logout and update-failure injection. Confirm its effective identity differs from the AltStore installation before installing it.
 
-1. **Install and prepare:** import the verified IPA; report whether it opens the saved library or a fresh connection screen. If fresh, connect and sign in, then download two chapters before opening their reader routes.
-2. **Offline and lifecycle:** enable Airplane Mode and turn Wi-Fi off. Force-quit/reopen, read both chapters, change the position in the second, rotate, and background/foreground the app. Reboot while offline and check both chapters and position again.
-3. **Native update with pending progress:** while offline, move to a new position and force-quit. Restore networking for AltStore installation while keeping Uchiyomi closed. Import a later build with the same identity. Before opening Uchiyomi, turn Airplane Mode on and Wi-Fi off again. Verify server, account, both chapters, and the new position. Then reconnect, open Uchiyomi, and verify that the same account in Safari/PWA receives the position. Repeat in the direct developer channel to establish both update paths.
-4. **Online surfaces:** open an undownloaded chapter without signing in again. Check safe areas in both orientations, an external link, and a copied share link; the share link must use the public server address.
+| OpenSpec task | Remaining physical evidence | Procedure |
+| --- | --- | --- |
+| 4.5 | Layout, lifecycle, keyboard, recovery, links and sharing | On build 1011 or later, read a chapter, rotate and switch inner/outer displays, background/resume, and check position. Open an external link in Safari and return; copy a share link and confirm it uses the selected public server. Check Servers/add-server keyboard dismissal and removal cancellation. |
+| 5.3 | Download/account failure boundaries | Run the existing WebKit fixture tests on the physical device in the separate developer installation: failed download cleanup/retry, unavailable server, expired identity, another account, logout and isolated profiles. Use the real app for foreground/reconnection checks. Earlier cold Airplane Mode and reboot results remain valid evidence. |
+| 5.4 | Cached UI update and recovery | Run the expanded update fixture on the physical device. Check an unchanged inventory, a changed UI, foreground reading retention, interrupted/corrupt/schema-rejected updates and failed-startup rollback, preserving chapter blobs and the original outbox event. Also observe the live host's readable-version update without losing the signed-in account or downloads. |
+| 6.2 | Direct developer update with unsynced progress | Prepare two chapters in a developer-signed baseline. Go offline, save a distinct new position, and force-quit. Install a higher build with the same bundle/team identity while the app stays closed. Open offline and verify profiles, session, chapters and position; reconnect and verify that position reaches the same server account. |
 
-Separate guided checks remain for interrupted downloads, sign-out/expired offline identity, account/server isolation, and applying/recovering a changed UI while chapters and progress are saved. Use disposable accounts/profiles for destructive checks. A successful check for updates when the server is already current does not establish update/recovery behavior.
+The real-WebKit tests can run with `xcodebuild test` against a physical destination using the configured developer team and a separate bundle identity. Prepare resources with `node ios/scripts/prepare-webview-fixture.mjs` first. The automatic-update, unavailable-server, expired-identity and profile-isolation cases create disposable profiles; do not opt into the native-upgrade seeding case against a populated personal catalog. Fixtures live only in the test bundle and are excluded from release IPAs.
+
+After those four tasks pass, reconcile their evidence, validate the OpenSpec change, sync its three capability specifications and archive it. Simulator results and earlier native builds must remain labeled accurately; published release metadata stays immutable.

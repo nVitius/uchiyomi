@@ -137,9 +137,14 @@ final class CachedWebViewTests: XCTestCase {
             let second = try ExportFixture(directory: export, revision: "second")
             second.assetDelay = 5_000_000
             remote = second
+            firstWeb.load(URLRequest(url: URL(string: "/reader/?book=fixture-2", relativeTo: profile.localOrigin)!.absoluteURL))
+            try await waitFor(firstWeb, "location.pathname === '/reader/' && Array.from(document.images).some(i=>i.src.startsWith('blob:') && i.complete && i.naturalWidth>0)")
+            _ = try await firstWeb.evaluateJavaScript("window.updateReadingMarker = 42; true")
             await model.resume()
             XCTAssertEqual(second.manifestReads, 0, "Foregrounding unexpectedly checked for updates")
             XCTAssertTrue(model.webView === firstWeb)
+            let marker = try await firstWeb.evaluateJavaScript("window.updateReadingMarker") as? Int
+            XCTAssertEqual(marker, 42, "A host update replaced the active reading document")
             let selecting = Task { await model.choose(profile) }
             for _ in 0..<200 {
                 if (model.downloadProgress ?? 0) > 0 { break }
@@ -164,6 +169,23 @@ final class CachedWebViewTests: XCTestCase {
             await model.choose(profile)
             _ = try await waitForReader()
             XCTAssertEqual(second.assetReads, reads, "Unchanged server version downloaded assets again")
+            for failure in [ExportFixture.Failure.interrupted, .corrupt, .unsupportedSchema] {
+                remote = try ExportFixture(directory: export, revision: "rejected-\(failure)", failure: failure)
+                await model.choose(profile)
+                XCTAssertNil(model.error, "A failed update hid the saved reader")
+                XCTAssertNotNil(model.status)
+                let retainedUI = try await cache.load()
+                XCTAssertEqual(retainedUI?.manifest.buildId, updated.manifest.buildId)
+                if failure == .unsupportedSchema { XCTAssertEqual(remote.assetReads, 0) }
+                let retainedWeb = try await waitForReader()
+                let retainedData = try await retainedWeb.callAsyncJavaScript("""
+                    const db=await new Promise((resolve,reject)=>{const r=indexedDB.open('yomi-offline',2);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)});
+                    const get=(store,key)=>new Promise((resolve,reject)=>{const r=db.transaction(store).objectStore(store).get(key);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)});
+                    const queued=await get('outbox',999),page=await get('pages','ios-fixture:fixture-2:2');db.close();
+                    return queued?.page===2 && queued?.userId==='ios-fixture' && queued?.ts===1700000000000 && page?.size>0 && JSON.parse(localStorage.getItem('uchiyomi.offlineUser')).id==='ios-fixture';
+                    """, arguments: [:], in: nil, contentWorld: .page) as? Bool
+                XCTAssertEqual(retainedData, true, "Rejected \(failure) update changed chapters, identity or queued progress")
+            }
             remote = try ExportFixture(directory: export, revision: "broken", broken: true)
             await model.choose(profile)
             // The running model must recover itself after the bootstrap fails, without a manual action.
@@ -462,12 +484,15 @@ private extension UIScreen {
 }
 
 private final class ExportFixture: AssetFetching {
+    enum Failure { case none, interrupted, corrupt, unsupportedSchema }
     var manifestReads = 0
     var assetReads = 0
     var assetDelay: UInt64 = 0
     private let inventory: Data
     private let files: [String: Data]
-    init(directory: URL, revision: String, broken: Bool = false) throws {
+    private let failure: Failure
+    init(directory: URL, revision: String, broken: Bool = false, failure: Failure = .none) throws {
+        self.failure = failure
         let original = try JSONDecoder().decode(AssetManifest.self, from: Data(contentsOf: directory.appendingPathComponent("mobile-assets.json")))
         var bytes: [String: Data] = [:]
         for asset in original.files {
@@ -476,7 +501,7 @@ private final class ExportFixture: AssetFetching {
             if broken && asset.path.hasSuffix(".js") { data = Data("throw new Error('Test bootstrap failure');".utf8) }
             bytes[asset.path] = data
         }
-        var manifest = AssetManifest(schemaVersion: 1, protocolVersion: 1, offlineSchemaVersion: 2,
+        var manifest = AssetManifest(schemaVersion: 1, protocolVersion: 1, offlineSchemaVersion: failure == .unsupportedSchema ? 3 : 2,
             buildId: AssetManifest.digest(Data(revision.utf8)), files: original.files.map {
                 .init(path: $0.path, size: bytes[$0.path]!.count, sha256: AssetManifest.digest(bytes[$0.path]!), contentType: $0.contentType)
             })
@@ -487,7 +512,9 @@ private final class ExportFixture: AssetFetching {
         if path == "/mobile-assets.json" { manifestReads += 1; return HTTPResponse(status: 200, headers: ["Content-Type": "application/json"], body: inventory) }
         assetReads += 1
         if assetDelay > 0 { try await Task.sleep(nanoseconds: assetDelay) }
+        if failure == .interrupted && assetReads == 3 { throw URLError(.networkConnectionLost) }
         guard let data = files[path] else { return .message(404, "missing") }
+        if failure == .corrupt && assetReads == 3 { return HTTPResponse(status: 200, body: Data(repeating: 0, count: data.count)) }
         return HTTPResponse(status: 200, body: data)
     }
 }
