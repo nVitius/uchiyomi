@@ -209,40 +209,50 @@ final class CachedWebViewTests: XCTestCase {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = scene.coordinateSpace.bounds
-        window.rootViewController = UIHostingController(rootView: ReaderView(model: model)); window.makeKeyAndVisible()
+        // Auth assertions exercise the real frontend and model in a plain UIKit host.
+        // Mount each WKWebView explicitly across identity changes. Native SwiftUI
+        // presentation is covered separately by the automatic-update/UI checks.
+        let host = UIViewController()
+        window.rootViewController = host; window.makeKeyAndVisible()
+        func mountReader() throws -> WKWebView {
+            host.view.subviews.forEach { $0.removeFromSuperview() }
+            let web = try XCTUnwrap(model.webView)
+            web.frame = host.view.bounds; host.view.addSubview(web)
+            return web
+        }
         defer { window.isHidden = true; window.rootViewController = nil; try? FileManager.default.removeItem(at: root) }
         // Recreate the reader at each identity boundary, matching cold launch and avoiding
         // mutations racing a previous document's React navigation.
-        var stage = "initial sign-in page"
+        var stage = "initial sign-in page"; NSLog("Auth fixture: %@", stage)
         do {
             await model.restore()
-            var web = try XCTUnwrap(model.webView)
+            var web = try mountReader()
             try await waitFor(web, "!!document.querySelector('input[type=password]')")
             _ = try await web.callAsyncJavaScript(Self.seed, arguments: [:], in: nil, contentWorld: .page)
-            stage = "valid offline identity"
-            await model.choose(profile); web = try XCTUnwrap(model.webView)
+            stage = "valid offline identity"; NSLog("Auth fixture: %@", stage)
+            await model.choose(profile); web = try mountReader()
             try await waitFor(web, "document.body.innerText.includes('Offline fixture')")
             _ = try await web.evaluateJavaScript("const u=JSON.parse(localStorage.getItem('uchiyomi.offlineUser'));u.exp=Date.now()-1;localStorage.setItem('uchiyomi.offlineUser',JSON.stringify(u));true")
-            stage = "expired offline identity"
-            await model.choose(profile); web = try XCTUnwrap(model.webView)
+            stage = "expired offline identity"; NSLog("Auth fixture: %@", stage)
+            await model.choose(profile); web = try mountReader()
             try await waitFor(web, "!!document.querySelector('input[type=password]') && localStorage.getItem('uchiyomi.offlineUser') === null")
-            stage = "different account"
+            stage = "different account"; NSLog("Auth fixture: %@", stage)
             // A different saved account must not see the first account's identically named chapter.
             _ = try await web.evaluateJavaScript("localStorage.setItem('uchiyomi.offlineUser',JSON.stringify({v:1,id:'other-fixture',username:'other',displayName:'Other Tester',role:'admin',exp:Date.now()+86400000}));true")
-            await model.choose(profile); web = try XCTUnwrap(model.webView)
+            await model.choose(profile); web = try mountReader()
             try await waitFor(web, "document.body.innerText.includes('No downloads')")
             let leaked = try await web.evaluateJavaScript("document.body.innerText.includes('Offline fixture')") as? Bool
             XCTAssertEqual(leaked, false)
             _ = try await web.callAsyncJavaScript(Self.seed, arguments: [:], in: nil, contentWorld: .page)
-            stage = "sign-out control"
-            await model.choose(profile); web = try XCTUnwrap(model.webView)
+            stage = "sign-out control"; NSLog("Auth fixture: %@", stage)
+            await model.choose(profile); web = try mountReader()
             try await waitFor(web, "document.body.innerText.includes('Offline fixture')")
             _ = try await web.evaluateJavaScript("document.querySelector('button[aria-label=You]').click();true")
             try await waitFor(web, "Array.from(document.querySelectorAll('button')).some(b => b.textContent.trim() === 'Sign out')")
-            stage = "sign-out and relaunch"
+            stage = "sign-out and relaunch"; NSLog("Auth fixture: %@", stage)
             _ = try await web.evaluateJavaScript("Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === 'Sign out').click();true")
             try await waitFor(web, "localStorage.getItem('uchiyomi.offlineUser') === null && !!document.querySelector('input[type=password]')")
-            await model.choose(profile); web = try XCTUnwrap(model.webView)
+            await model.choose(profile); web = try mountReader()
             try await waitFor(web, "!!document.querySelector('input[type=password]') && localStorage.getItem('uchiyomi.offlineUser') === null")
             await model.addServer()
         } catch {

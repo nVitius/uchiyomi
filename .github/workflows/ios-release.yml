@@ -101,6 +101,7 @@ jobs:
           path: |
             ios/build/ci/archive.log
             ios/build/WebViewCI/test.log
+            ios/build/WebViewCI/tests.xcresult/
           retention-days: 7
 
   release:
