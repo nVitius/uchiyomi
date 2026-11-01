@@ -182,4 +182,43 @@ final class IntegrationTests {
         let status = try await observer.fetch("/__stats", maxBytes: 4096)
         #expect((try JSONSerialization.jsonObject(with: status.body) as? [String: Any])?["redirectHits"] as? Int == 0)
     }
+
+    @Test func testRequestsAfterCancellationNeverReachTheServer() async throws {
+        let vault = MemoryVault()
+        let client = try RemoteClient(origin: origin, vault: vault)
+        let observer = try RemoteClient(origin: origin, vault: MemoryVault())
+        defer { observer.cancel() }
+        client.cancel()
+        let late = await client.proxy(HTTPRequest(method: "GET", target: "/caught", headers: [:], body: Data()))
+        #expect(late.status == 503)
+        do { _ = try await client.fetch("/caught", maxBytes: 4096); Issue.record("Canceled client accepted a fetch") }
+        catch { #expect(error is CancellationError) }
+        let status = try await observer.fetch("/__stats", maxBytes: 4096)
+        #expect((try JSONSerialization.jsonObject(with: status.body) as? [String: Any])?["redirectHits"] as? Int == 0)
+        #expect(vault.data == nil)
+    }
+
+    @Test func testClientCancellationStopsAnActiveResponseBody() async throws {
+        let client = try RemoteClient(origin: origin, vault: MemoryVault())
+        let observer = try RemoteClient(origin: origin, vault: MemoryVault())
+        defer { client.cancel(); observer.cancel() }
+        let reply = await client.proxy(HTTPRequest(method: "GET", target: "/api/stream", headers: [:], body: Data()))
+        #expect(reply.status == 200)
+        let stream = try #require(reply.stream)
+        var received = 0
+        do {
+            try await stream.write { data in received += data.count; client.cancel() }
+            Issue.record("Canceled response body completed normally")
+        } catch {}
+        #expect(received > 0 && received < 32 * 65536)
+        var stopped = false
+        for _ in 0..<50 {
+            let status = try await observer.fetch("/__stats", maxBytes: 4096)
+            let stats = try #require(JSONSerialization.jsonObject(with: status.body) as? [String: Any])
+            #expect(stats["completed"] as? Int == 0)
+            if stats["streaming"] as? Int == 0 { stopped = true; break }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        #expect(stopped, "Canceled profile kept downloading the response body")
+    }
 }

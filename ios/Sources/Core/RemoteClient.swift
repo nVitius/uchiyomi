@@ -40,22 +40,62 @@ struct KeychainCookieVault: CookieVault {
     }
 }
 
+// Keep cancellation independent of URLSession invalidation. An async request can
+// enter Foundation after its profile closes; invalidating then raises an Obj-C
+// exception instead of a catchable Swift error. Registration runs synchronously
+// during task creation, so cancellation also catches tasks created in that race.
+private final class RemoteSessionLifetime: @unchecked Sendable {
+    private final class Reference {
+        weak var task: URLSessionTask?
+        init(_ task: URLSessionTask) { self.task = task }
+    }
+    private let lock = NSLock()
+    private var cancelled = false
+    private var tasks: [Int: Reference] = [:]
+
+    func whileActive<T>(_ body: () throws -> T) throws -> T {
+        lock.lock(); defer { lock.unlock() }
+        guard !cancelled else { throw CancellationError() }
+        return try body()
+    }
+    func register(_ task: URLSessionTask) {
+        lock.lock()
+        let shouldCancel = cancelled
+        if !shouldCancel {
+            tasks = tasks.filter { $0.value.task != nil }
+            tasks[task.taskIdentifier] = Reference(task)
+        }
+        lock.unlock()
+        if shouldCancel { task.cancel() }
+    }
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        let active = tasks.values.compactMap { $0.task }
+        tasks.removeAll()
+        lock.unlock()
+        active.forEach { $0.cancel() }
+    }
+}
+
 // Redirects are deliberately rejected. In particular, a server cannot move a
 // bearer token, password body, or refresh cookie to an unrelated origin using an HTTP redirect.
-private final class NoRedirects: NSObject, URLSessionTaskDelegate {
+private class NoRedirects: NSObject, URLSessionTaskDelegate {
+    let lifetime: RemoteSessionLifetime
+    init(lifetime: RemoteSessionLifetime) { self.lifetime = lifetime }
+    func urlSession(_ session: URLSession, didCreateTask task: URLSessionTask) { lifetime.register(task) }
     func urlSession(_ session: URLSession, task: URLSessionTask,
                     willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
                     completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
 }
 
-private final class BoundedDownload: NSObject, URLSessionDownloadDelegate {
+private final class BoundedDownload: NoRedirects, URLSessionDownloadDelegate {
     let limit: Int64
-    init(limit: Int) { self.limit = Int64(limit) }
+    init(limit: Int, lifetime: RemoteSessionLifetime) { self.limit = Int64(limit); super.init(lifetime: lifetime) }
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {}
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
         if totalBytesWritten > limit || totalBytesExpectedToWrite > limit { downloadTask.cancel() }
     }
-    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
 }
 
 final class RemoteClient {
@@ -63,8 +103,7 @@ final class RemoteClient {
     private let session: URLSession
     private let cookies: HTTPCookieStorage
     private let vault: CookieVault
-    private let persistenceLock = NSLock()
-    private var cancelled = false
+    private let lifetime: RemoteSessionLifetime
 
     init(origin: URL, vault: CookieVault, configuration: URLSessionConfiguration = .ephemeral) throws {
         self.origin = origin
@@ -84,15 +123,14 @@ final class RemoteClient {
                 if let cookie = HTTPCookie(properties: properties), cookie.expiresDate.map({ $0 > Date() }) ?? true { cookies.setCookie(cookie) }
             }
         }
-        session = URLSession(configuration: configuration, delegate: NoRedirects(), delegateQueue: nil)
+        let lifetime = RemoteSessionLifetime()
+        self.lifetime = lifetime
+        session = URLSession(configuration: configuration, delegate: NoRedirects(lifetime: lifetime), delegateQueue: nil)
     }
 
-    func cancel() {
-        persistenceLock.lock()
-        cancelled = true
-        persistenceLock.unlock()
-        session.invalidateAndCancel()
-    }
+    func cancel() { lifetime.cancel() }
+    // Active async methods retain this client until task creation has finished.
+    deinit { session.invalidateAndCancel() }
 
     func url(for target: String) throws -> URL {
         guard target.hasPrefix("/"), !target.hasPrefix("//"), !target.contains("\\"),
@@ -104,14 +142,13 @@ final class RemoteClient {
     }
 
     private func persistCookies() throws {
-        persistenceLock.lock()
-        defer { persistenceLock.unlock() }
-        // A late response must not recreate credentials after its profile has been forgotten.
-        guard !cancelled else { throw CancellationError() }
-        let records = (cookies.cookies ?? []).compactMap { cookie -> [String: Any]? in
-            cookie.properties.map { Dictionary(uniqueKeysWithValues: $0.map { ($0.key.rawValue, $0.value) }) }
+        try lifetime.whileActive {
+            // A late response must not recreate credentials after its profile has been forgotten.
+            let records = (cookies.cookies ?? []).compactMap { cookie -> [String: Any]? in
+                cookie.properties.map { Dictionary(uniqueKeysWithValues: $0.map { ($0.key.rawValue, $0.value) }) }
+            }
+            try vault.write(PropertyListSerialization.data(fromPropertyList: records, format: .binary, options: 0))
         }
-        try vault.write(PropertyListSerialization.data(fromPropertyList: records, format: .binary, options: 0))
     }
 
     private func responseHeaders(_ response: HTTPURLResponse) -> [String: String] {
@@ -129,12 +166,13 @@ final class RemoteClient {
     }
 
     func fetch(_ target: String, maxBytes: Int, method: String = "GET", headers: [String: String] = [:], body: Data? = nil) async throws -> HTTPResponse {
+        try lifetime.whileActive {}
         var request = URLRequest(url: try url(for: target))
         request.httpMethod = method
         request.httpBody = body
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         // Download to a temporary file so a large/malformed response does not grow the app heap unbounded.
-        let (file, response) = try await session.download(for: request, delegate: BoundedDownload(limit: maxBytes))
+        let (file, response) = try await session.download(for: request, delegate: BoundedDownload(limit: maxBytes, lifetime: lifetime))
         defer { try? FileManager.default.removeItem(at: file) }
         try persistCookies()
         let http = try validate(response)
@@ -145,6 +183,7 @@ final class RemoteClient {
 
     func proxy(_ request: HTTPRequest) async -> HTTPResponse {
         do {
+            try lifetime.whileActive {}
             // Cookie, Host, Referer, forwarded headers and the local gateway secret never pass through.
             var headers: [String: String] = ["Origin": origin.absoluteString, "Referer": origin.absoluteString + "/"]
             for key in ["authorization", "content-type", "accept", "accept-language", "range", "if-range"] {
