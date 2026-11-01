@@ -136,7 +136,7 @@ struct ReaderLoadingView: View {
                 Text(model.serverName).font(.headline).multilineTextAlignment(.center)
                 if let value = model.downloadProgress {
                     ProgressView(value: value).tint(ReaderTheme.accent)
-                        .accessibilityLabel("Download progress")
+                        .accessibilityLabel("Loading progress")
                     Text(model.progress ?? "Opening your library…").font(.subheadline).foregroundStyle(ReaderTheme.muted)
                     Text(value, format: .percent.precision(.fractionLength(0)))
                         .font(.caption.monospacedDigit()).foregroundStyle(ReaderTheme.muted)

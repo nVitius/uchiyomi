@@ -204,7 +204,7 @@ final class ReaderModel: ObservableObject {
             let launch = try await cache.prepareForLaunch(client: assetClient?(remote) ?? remote,
                                                          checkForUpdates: checkForUpdates) { [weak self] count, total in
                 await MainActor.run {
-                    self?.progress = "Saving for offline use…"
+                    self?.progress = "Loading Uchiyomi…"
                     self?.downloadProgress = Double(count) / Double(max(total, 1))
                 }
             }
