@@ -7,6 +7,7 @@ output="${1:-ios/build/WebViewCI}"
 [[ ! -e "$output" ]] || { echo "Output already exists: $output" >&2; exit 1; }
 mkdir -p "$output"
 simulator="${UCHI_SIMULATOR_ID:-}"
+device_type="${UCHI_SIMULATOR_DEVICE_TYPE:-com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro}"
 created=false
 cleanup() {
   if [[ "$created" == true ]]; then
@@ -18,18 +19,19 @@ trap cleanup EXIT
 if [[ -z "$simulator" ]]; then
   xcrun simctl list runtimes --json > "$output/runtimes.json"
   sdk="$(xcrun --sdk iphonesimulator --show-sdk-version)"
-  runtime="$(python3 - "$output/runtimes.json" "$sdk" <<'PY'
+  runtime="$(python3 - "$output/runtimes.json" "$sdk" "$device_type" <<'PY'
 import json, sys
 sdk = tuple(map(int, sys.argv[2].split('.')))
 available = [r for r in json.load(open(sys.argv[1]))['runtimes']
              if r.get('isAvailable') and '.iOS-' in r['identifier']
-             and tuple(map(int, r['version'].split('.')))[:2] == sdk[:2]]
+             and tuple(map(int, r['version'].split('.')))[:2] == sdk[:2]
+             and sys.argv[3] in {d['identifier'] for d in r.get('supportedDeviceTypes', [])}]
 if not available:
-    raise SystemExit('Install an iOS simulator runtime matching the selected Xcode SDK')
+    raise SystemExit('Install an iOS simulator runtime matching the selected Xcode SDK and device type')
 print(available[0]['identifier'])
 PY
 )"
-  simulator="$(xcrun simctl create 'Uchiyomi CI' com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro "$runtime")"
+  simulator="$(xcrun simctl create 'Uchiyomi CI' "$device_type" "$runtime")"
   created=true
 fi
 xcrun simctl bootstatus "$simulator" -b

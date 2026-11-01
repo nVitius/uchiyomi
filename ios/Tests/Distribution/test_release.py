@@ -13,7 +13,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT/'ios/scripts'))
-from release_lib import inspect_payload, make_source, tag_version, validate_record, verify_ipa
+from release_lib import inspect_payload, make_source, require_full_display_sdk, tag_version, validate_record, verify_ipa
 from github_release import fetch_records, find_release, release_assets, verify_existing_files
 
 
@@ -27,6 +27,7 @@ class ReleaseTests(unittest.TestCase):
             'CFBundleIdentifier': self.listing['bundleIdentifier'], 'CFBundleExecutable': 'Uchiyomi',
             'CFBundleShortVersionString': '0.1.0', 'CFBundleVersion': '1001', 'MinimumOSVersion': '17.0',
             'CFBundleSupportedPlatforms': ['iPhoneOS'], 'WKAppBoundDomains': ['localhost'],
+            'DTSDKName': 'iphoneos27.1', 'DTSDKBuild': 'fixture-sdk', 'DTXcodeBuild': 'fixture-xcode',
             'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},
             'CFBundleIcons': {'CFBundlePrimaryIcon': {'CFBundleIconName': 'AppIcon'}},
             'NSLocalNetworkUsageDescription': 'Connect to your server on your local network.'
@@ -64,6 +65,24 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(app['appPermissions']['privacy'], self.record['privacyPermissions'])
         self.assertEqual(app['versions'][0]['sha256'], self.record['sha256'])
         self.assertIn('/example/reader/releases/download/ios-v0.1.0-beta.1/', app['versions'][0]['downloadURL'])
+
+    def test_new_packages_require_the_full_display_sdk_without_raising_minimum_ios(self):
+        for sdk in ['iphoneos27.1', 'iphoneos27.2', 'iphoneos28.0']:
+            require_full_display_sdk(dict(self.info, DTSDKName=sdk))
+        for sdk in ['', 'iphoneos26.2', 'iphoneos27.0', 'iphonesimulator27.1']:
+            with self.subTest(sdk=sdk), self.assertRaisesRegex(ValueError, 'iOS 27.1 SDK'):
+                require_full_display_sdk(dict(self.info, DTSDKName=sdk))
+        self.assertEqual(self.source([self.record])['apps'][0]['versions'][0]['minOSVersion'], '17.0')
+
+    def test_historical_ipas_remain_verifiable_but_sdk_metadata_cannot_lie(self):
+        self.info['DTSDKName'] = 'iphoneos26.2'
+        self.write_ipa()
+        self.record.update(sha256=hashlib.sha256(self.ipa.read_bytes()).hexdigest(), size=self.ipa.stat().st_size)
+        verify_ipa(self.ipa, self.record)
+        self.assertEqual(len(self.source([self.record])['apps'][0]['versions']), 1)
+        verify_ipa(self.ipa, dict(self.record, buildSDK='iphoneos26.2'))
+        with self.assertRaisesRegex(ValueError, 'DTSDKName'):
+            verify_ipa(self.ipa, dict(self.record, buildSDK='iphoneos27.1'))
 
     def test_tampered_download_and_size_are_rejected(self):
         for key, value in [('sha256', 'c'*64), ('size', self.record['size']+1)]:

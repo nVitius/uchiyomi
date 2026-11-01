@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import plistlib
 
-from release_lib import artifact_name, inspect_payload, require, verify_ipa
+from release_lib import artifact_name, inspect_payload, require, require_full_display_sdk, verify_ipa
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('output', type=Path)
@@ -19,6 +19,7 @@ ipa = output / 'Uchiyomi.ipa'
 entitlements = plistlib.loads((output / 'entitlements.plist').read_bytes())
 source = json.loads((output / 'source.json').read_text())
 info, privacy, names = inspect_payload(ipa)
+require_full_display_sdk(info)
 bundle = info['CFBundleIdentifier']
 profile = None
 if args.mode == 'development':
@@ -40,6 +41,7 @@ report = {
     'bundleIdentifier': bundle, 'applicationIdentifier': entitlements.get('application-identifier'),
     'teamIdentifier': entitlements.get('com.apple.developer.team-identifier'),
     'minimumIOS': info['MinimumOSVersion'], 'protocolVersion': 1, 'offlineSchemaVersion': 2,
+    'buildSDK': info['DTSDKName'], 'buildSDKBuild': info['DTSDKBuild'], 'xcodeBuild': info['DTXcodeBuild'],
     'sourceRevision': source['revision'], 'sourceDirty': source['dirty'], 'sourceSha256': source['sourceSha256'],
     'createdUTC': datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z'),
     'provisioningExpiresUTC': profile['ExpirationDate'].isoformat() + 'Z' if profile else None,

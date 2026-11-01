@@ -62,6 +62,14 @@ def artifact_name(version, build):
     return f"Uchiyomi-{version}-{build}.ipa"
 
 
+def require_full_display_sdk(info):
+    # New packages must opt into Duo's full display through the actual build SDK.
+    # Keep historical IPAs readable by applying this only during packaging.
+    sdk = re.fullmatch(r"iphoneos([0-9]+)\.([0-9]+)(?:\.[0-9]+)?", info.get('DTSDKName', ''))
+    require(sdk is not None and (int(sdk[1]), int(sdk[2])) >= (27, 1),
+            'Build with the iOS 27.1 SDK or later to support the full iPhone Duo display')
+
+
 def validate_record(record, publication=False):
     require(record["distribution"] == "altstore", "Public source requires an AltStore package")
     require(record["artifact"] == artifact_name(record["version"], record["build"]), "Unexpected artifact name")
@@ -94,6 +102,9 @@ def verify_ipa(ipa, record):
                        ("CFBundleVersion", "build"), ("MinimumOSVersion", "minimumIOS")]:
         require(info[key] == record[field], f"IPA {key} differs from metadata")
     require(privacy == record["privacyPermissions"], "IPA privacy permissions differ from metadata")
+    for key, field in [('DTSDKName', 'buildSDK'), ('DTSDKBuild', 'buildSDKBuild'), ('DTXcodeBuild', 'xcodeBuild')]:
+        if field in record:
+            require(info.get(key) == record[field], f'IPA {key} differs from metadata')
 
 
 def download_url(repository, record):

@@ -61,7 +61,9 @@ No App Store export or upload occurs. This packaging path needs the configured d
 
 ### Automated IPA releases and AltStore source
 
-The [iOS beta workflow](../.github/workflows/ios-release.yml) supports pull requests, manual **Run workflow** builds, and `ios-v*` release tags. It pins `macos-15` / Xcode 26.3 and Node 24, runs packaging regressions and native core tests, creates the device IPA, then builds the frontend fixture and runs the real WebKit/lifecycle tests. Publishing waits for all checks. The database-dependent native TOTP case remains gated in this job; its separate fixture and physical acceptance are documented above.
+The [iOS beta workflow](../.github/workflows/ios-release.yml) supports pull requests, manual **Run workflow** builds, and `ios-v*` release tags. It uses GitHub's `xcode-27` runner with Xcode 27.1 and Node 24, runs packaging regressions and native core tests, creates the device IPA, then builds the frontend fixture and runs the real WebKit/lifecycle tests on iPhone Duo. Publishing waits for all checks. The database-dependent native TOTP case remains gated in this job; its separate fixture and physical acceptance are documented above.
+
+New packages require the **iOS 27.1 SDK or later** for the Duo's full display; the deployment minimum remains **iOS 17**. Packaging records the actual SDK/Xcode build in `release.json` and rejects older SDKs. Earlier CI build1005 used iOS26.2 and is letterboxed on the Duo, whereas local builds used iOS27.2. Historical releases remain verifiable in the source. See [Apple's Duo SDK/layout guidance](https://developer.apple.com/iphone-duo/prepare/) and the [hosted runner's installed toolchains](https://github.com/actions/runner-images/blob/main/images/macos/xcode-27-arm64-Readme.md).
 
 Manual/PR runs produce downloadable Actions artifacts and an **unpublished source preview**. Preview URLs describe where a future release would live; they are not promised to resolve. Tag runs publish a GitHub **prerelease** with the IPA, `SHA256SUMS`, and `release.json`. They never move the main GitHub latest release or trigger the existing Docker `v*` pipeline.
 
