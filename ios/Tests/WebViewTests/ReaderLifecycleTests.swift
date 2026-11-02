@@ -28,6 +28,9 @@ final class ReaderLifecycleTests: XCTestCase {
             XCTAssertEqual(model.status, "Server unavailable. You’re using the saved offline reader.")
             XCTAssertEqual(model.serverStatuses[profile.id], .unavailable)
             try await waitForPath(model, "/")
+            XCTAssertNil(model.navigation, "An older frontend must retain its own navigation")
+            let cacheProtocol = try await model.webView?.evaluateJavaScript("uchiyomiNative.protocolVersion") as? Int
+            XCTAssertEqual(cacheProtocol, 1, "Optional navigation must not change the cache protocol")
             model.webView?.load(URLRequest(url: URL(string: "/reader/?book=fixture-1", relativeTo: profile.localOrigin)!.absoluteURL))
             try await waitForPath(model, "/reader/")
             await model.resume()

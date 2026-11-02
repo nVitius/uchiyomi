@@ -84,6 +84,12 @@ struct ReaderView: View {
                 if model.webView != nil {
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
+                            if let navigation = model.navigation {
+                                ForEach(navigation.secondary) { item in
+                                    Button(item.label, systemImage: item.id.symbol) { model.navigationBridge?.request(item.id) }
+                                        .disabled(!item.enabled)
+                                }
+                            }
                             Section(model.serverName) {
                                 Button("Servers", systemImage: "server.rack") { model.showingServers = true }
                                 Button("Reload", systemImage: "arrow.clockwise") { Task { await model.reload() } }
@@ -287,19 +293,31 @@ private struct ServerConnectionView: View {
     }
 }
 
-private struct ReaderWebView: UIViewRepresentable {
+private struct ReaderWebView: UIViewControllerRepresentable {
     let view: WKWebView
-    let model: ReaderModel
+    @ObservedObject var model: ReaderModel
     func makeCoordinator() -> Coordinator { Coordinator(model: model) }
-    func makeUIView(context: Context) -> WKWebView {
+    func makeUIViewController(context: Context) -> ReaderNavigationController {
         view.navigationDelegate = context.coordinator
         view.uiDelegate = context.coordinator
-        return view
+        let controller = ReaderNavigationController(webView: view)
+        controller.onSelect = { [weak model] in
+            guard let action = ReaderNavigationAction(rawValue: $0.rawValue) else { return }
+            model?.navigationBridge?.request(action)
+        }
+        return controller
     }
-    func updateUIView(_ view: WKWebView, context: Context) {}
+    func updateUIViewController(_ controller: ReaderNavigationController, context: Context) {
+        let state = model.navigation
+        controller.update(items: state?.items ?? [], selected: state?.selected ?? .home, visible: state?.showsTabs == true)
+    }
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         let model: ReaderModel
         init(model: ReaderModel) { self.model = model }
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            guard model.webView === webView else { return }
+            model.navigationBridge?.reset()
+        }
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
             guard model.webView === webView, navigationAction.targetFrame == nil, let url = navigationAction.request.url else { return nil }
             if model.isLocal(url) { webView.load(navigationAction.request) }
@@ -320,6 +338,7 @@ private struct ReaderWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { model.navigationFailed(webView, error: error) }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
             guard model.webView === webView else { return }
+            model.navigationBridge?.reset()
             Task { await model.reload() }
         }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { model.navigationFailed(webView, error: error) }

@@ -23,6 +23,14 @@ Safari/PWA storage is separate and is not imported. Signing out or expiration of
 
 ## Servers and recovery
 
+### Native navigation experiment
+
+This branch adds optional native tabs throughout the iOS app. With a compatible frontend, iOS chooses the bar placement and overflow for the current display. Reading hides the primary bar. **…** also exposes Lists, history, Moments, Updates, permitted Admin and the existing Quick settings sheet; Quick settings remains available offline for sign-out. Servers and Reload remain in that menu.
+
+Older frontends and older wrappers keep their existing web navigation. A missing or failed navigation handshake also keeps the web controls. The cache/startup protocol is unchanged. See [the host navigation contract](HOST-NAVIGATION.md) for the platform-neutral web abstraction, compatibility, rollback and this experiment's physical-device checklist. Android is an extension point, not an implemented client. Historical device acceptance below does not cover this new experiment.
+
+### Managing profiles
+
 The reader's **… → Servers** opens a dedicated Uchiyomi-themed page to select saved profiles, add a server, or remove one. Each has a persistent WebKit store, local address, UI cache, and cookie jar. Switching stops the old web view and its requests. Selecting an existing profile preserves its downloads.
 
 The trash button requires confirmation. Removal deletes that server's **local** session, downloaded chapters, cached app, and unsynced progress. It does not delete the remote library or another profile. Reconnect first if you need pending progress synced.
