@@ -1,6 +1,6 @@
 # Native navigation experiment verification
 
-Verification, 2026-11-02 UTC. The matching backend/frontend is deployed to the private test server. Native build 1016 remains unpublished and has not been accepted on a physical device. The protocol and remaining device checklist are in [HOST-NAVIGATION.md](HOST-NAVIGATION.md).
+Verification, 2026-11-02 UTC. The matching backend/frontend is deployed to the private test server. Hosted native build 1015 is published to the private AltStore channel; physical-device acceptance remains pending. The separate local candidate numbered 1016 remains unpublished. The protocol and remaining device checklist are in [HOST-NAVIGATION.md](HOST-NAVIGATION.md).
 
 ## Source and compatibility
 
@@ -57,7 +57,17 @@ The WebKit script deliberately runs authentication in a separate test-host invoc
 
 Prepare a local AltStore candidate with `ios/scripts/package.sh`; it verifies the ad-hoc signature, IPA metadata and a before/after source fingerprint. AltStore supplies the user's final signing. Use the established installation identifier for an existing private test channel; keep the repository's official identifier unchanged. The candidate directory contains `release.json`, `source.json`, checksums and the IPA. Pair it with the verified frontend export and its `mobile-assets.json` manifest.
 
-Before native delivery, confirm the channel's installed/published build number. The server deployment is complete; the native candidate has not been pushed or published to AltStore. Physical folding/rotation, keyboard, larger text, VoiceOver, in-place retention, offline reboot and subsequent sync remain open.
+The server deployment and native beta publication are complete. Physical folding/rotation, keyboard, larger text, VoiceOver, in-place retention, offline reboot and subsequent sync remain open.
+
+## Hosted beta publication
+
+- Published version `0.1.0` (build `1015`), tag `ios-v0.1.0-beta.12`, on the fork's existing AltStore source. CI assigns build numbers independently of the unpublished local candidate numbered 1016.
+- Release source `e8fd3803cf7cde9d8bae08bc9e5f166374e4c5d9` contains the verified implementation at `3f23729c` plus deployment documentation and the private channel's existing bundle identifier. The private identifier change is confined to `release/ios-native-navigation`; the feature branch retains the official identifier.
+- [GitHub Actions run 41419163049](https://github.com/nVitius/uchiyomi/actions/runs/41419163049) passed its build, release and source jobs. Hosted WebKit on iOS 27.1 passed 12 main cases and the separate authentication case; the existing opt-in installation fixture was skipped.
+- Attempt 1 exceeded the prepared-reader test's deadline. Its timeout snapshot showed the simulator networking process inside cookie-setting and kernel disk-I/O throttling; the test subsequently completed its assertions. An unchanged fresh-run attempt passed that case in 24 seconds and completed both test invocations. No assertion, timeout or product code was changed for the retry.
+- Independent public verification at 09:50:43 UTC checked the IPA's checksum, size, ad-hoc signature, empty signing entitlements, absent personal profile, exact source fingerprint and bundle identity. The feed advertises build 1015 and preserves every previous release entry.
+
+IPA SHA-256: `c3744980ba14278a9474fd7f47fb6fd60c54d6b09b8d724fcc373a9cf3e42d55` (967,298 bytes). Local evidence: `ios/build/navigation-published-1015/`. Publication does not establish successful installation or physical Duo behavior.
 
 ## Private server deployment
 
