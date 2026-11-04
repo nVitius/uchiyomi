@@ -49,7 +49,7 @@ This is a navigation interface for the selected server's trusted web UI, not an 
 
 ReaderModel owns one WKWebView and website store. A SwiftUI-hosted `UITabBarController` moves that view among lightweight destination containers. Native tab presses request a web action; committed web state selects the destination. UIKit supplies placement and More overflow. No device name, folding breakpoint or right-edge coordinate is hard-coded.
 
-The viewport fits the intersection of UIKit's available tab content and the selected child's safe area, including More's header and the existing reader toolbar. Native navigation removes web TopNav, Sidebar and BottomNav only after negotiation. Shared sheets, dialogs, fixed actions and notice offsets consume the active chrome geometry. The native reader menu retains Servers and Reload and exposes the secondary web actions.
+The SwiftUI representable ignores horizontal container safe areas so UIKit's tab container reaches the display edge and can participate in the system vertical bar. Vertical insets still reserve space for the surrounding toolbar and native notices. Inside that container, the web viewport fits the intersection of UIKit's available tab content and the selected child's safe area, including More's header and the existing reader toolbar. Native navigation removes web TopNav, Sidebar and BottomNav only after negotiation. Shared sheets, dialogs, fixed actions and notice offsets consume the active chrome geometry. The native reader menu retains Servers and Reload and exposes the secondary web actions.
 
 ## Compatibility and rollback
 

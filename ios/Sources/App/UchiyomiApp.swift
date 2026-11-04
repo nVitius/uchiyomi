@@ -73,6 +73,10 @@ struct ReaderView: View {
                     ReaderLoadingView(model: model)
                 } else if let webView = model.webView {
                     ReaderWebView(view: webView, model: model).id(ObjectIdentifier(webView))
+                        // The system tab container must reach the display edge to join
+                        // the adaptive vertical bar. Its own guides inset web content.
+                        // Keep vertical insets for the toolbar and native notices.
+                        .ignoresSafeArea(.container, edges: .horizontal)
                 } else {
                     ServerConnectionView(model: model)
                 }

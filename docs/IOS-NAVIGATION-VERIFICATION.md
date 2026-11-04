@@ -1,6 +1,6 @@
 # Native navigation experiment verification
 
-Verification, 2026-11-02 UTC. The matching backend/frontend is deployed to the private test server. Hosted native build 1015 is published to the private AltStore channel; physical-device acceptance remains pending. The separate local candidate numbered 1016 remains unpublished. The protocol and remaining device checklist are in [HOST-NAVIGATION.md](HOST-NAVIGATION.md).
+Verification through 2026-11-04 UTC. The matching backend/frontend is deployed to the private test server. Hosted native build 1015 is published to the private AltStore channel; physical-device acceptance remains pending. The adaptive-bar correction below is local and requires a new native release. Local candidates numbered 1016 remain unpublished. The protocol and remaining device checklist are in [HOST-NAVIGATION.md](HOST-NAVIGATION.md).
 
 ## Source and compatibility
 
@@ -31,7 +31,24 @@ The hosted suite covers one web view/store/document across all six destinations 
 
 The browser extension to the existing walk covers all primary/secondary routes, root re-taps, child/root history, rejected actions, Quick settings, live ownership loss and failed handshakes. It hit-tests More's last action, confirmation controls, Filters footer, the editor/extraction dialog, ContinueBar, fixed selection bars and notices at 390, 768, 1023 and 1024 pixels. The extraction response stand-in supplies capability/job metadata only; it does not claim to test the extraction engine.
 
-Screenshots remain local attachments in the result bundles and browser output. UIKit selected a bottom tab bar in the captured simulator poses; actual Duo dock placement and accessibility are still physical acceptance items. No custom right-edge positioning is imposed.
+Screenshots remain local attachments in the result bundles and browser output. The initial simulator runs captured bottom tabs even in vertical-bar poses; that gap was exposed by physical feedback and corrected below. Actual updated-device placement and accessibility remain physical acceptance items. No custom right-edge positioning is imposed.
+
+## Adaptive bar correction
+
+The user's Duo screenshot showed the primary destinations at the bottom while only the secondary menu entered the side dock. The outer SwiftUI navigation stack was insetting the tab controller horizontally, preventing it from reaching the display edge and participating in the vertical bar. The representable now ignores horizontal container safe areas; UIKit still insets the web content, and vertical SwiftUI insets still reserve space for native notices and the toolbar. This is a native-only correction; the deployed frontend and navigation protocol remain compatible.
+
+The existing full `ReaderView` test now checks the tab bar's actual axis against the system's `verticalBarEdge` trait, its reach to the display edge, and clearance from the web viewport. The previous test checked view ownership and positive bounds but could pass with the wrong bar placement.
+
+Focused `NativeNavigationTests` runs on iOS 27.2, 2026-11-04 UTC:
+
+| Local result bundle in `ios/build` | Result |
+| --- | --- |
+| `navigation-icons-outer.xcresult` | 3 passed on the folded Duo display. |
+| `navigation-icons-inner-landscape.xcresult` | 3 passed; screenshot shows all six primary icons in the side dock on the unfolded 951×669 display. |
+| `navigation-icons-inner-portrait.xcresult` | 3 passed; screenshot shows horizontal tabs on the unfolded 669×951 display. |
+| `navigation-icons-phone.xcresult` | 3 passed on iPhone 18 Pro; ordinary tabs/More remain usable. |
+
+These 12 cases retain the existing single-view/store/document, Servers/notices, immersive reading, resize, offline frontend and legacy fallback coverage. The full unrelated core/auth/browser suites were not repeated for this layout modifier. Before/after screenshots are local result attachments. The updated IPA still needs publication and confirmation on the physical Duo; earlier device results do not validate this correction.
 
 ## Reproduce
 

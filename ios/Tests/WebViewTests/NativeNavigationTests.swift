@@ -76,6 +76,18 @@ final class NativeNavigationTests: XCTestCase {
             try await waitFor { container.showsNavigation }
             try await Task.sleep(nanoseconds: 350_000_000)
             XCTAssertTrue(web.window === window)
+            let bar = container.tabs.tabBar.convert(container.tabs.tabBar.bounds, to: window)
+            let content = web.convert(web.bounds, to: window)
+            if #available(iOS 27.1, *), window.traitCollection.verticalBarEdge != .unspecified {
+                // A tab controller inset by the outer SwiftUI navigation stack can
+                // stay horizontal even while the host menu moves to the side.
+                XCTAssertGreaterThan(bar.height, bar.width, "Primary tabs must join the system's vertical bar")
+                XCTAssertLessThanOrEqual(min(abs(bar.minX), abs(window.bounds.maxX - bar.maxX)), 1,
+                                         "The native tab container must reach the display edge")
+            } else {
+                XCTAssertGreaterThan(bar.width, bar.height, "Keep ordinary horizontal tabs when no vertical bar is available")
+            }
+            XCTAssertFalse(content.insetBy(dx: 1, dy: 1).intersects(bar), "Native tabs overlap web content")
             let screenshot = XCTAttachment(image: window.screen.screenshotForTest(window: window))
             screenshot.name = "Reader screen with native navigation"; screenshot.lifetime = .keepAlways; add(screenshot)
 
