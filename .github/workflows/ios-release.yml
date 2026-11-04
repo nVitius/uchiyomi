@@ -30,7 +30,7 @@ jobs:
     timeout-minutes: 35
     env:
       # Explicit toolchain, independent of the runner's changing default.
-      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
       UCHI_SIMULATOR_DEVICE_TYPE: com.apple.CoreSimulator.SimDeviceType.iPhone-Duo
       PUPPETEER_SKIP_DOWNLOAD: 'true'
     steps:
@@ -68,6 +68,23 @@ jobs:
           npm ci --no-audit --no-fund
           npm run build
           node --import tsx --test test/nativeHost.test.ts test/desktopSurfaces.test.ts
+      - name: Install matching simulator runtime if needed
+        run: |
+          # The hosted image includes Xcode 27.2 but may preinstall only the
+          # 27.1 Duo runtime. Keep CI on the same runtime series as local QA.
+          xcrun simctl list runtimes --json > "$RUNNER_TEMP/ios-runtimes.json"
+          if ! python3 - "$RUNNER_TEMP/ios-runtimes.json" "$UCHI_SIMULATOR_DEVICE_TYPE" <<'PY'
+          import json, sys
+          runtimes = json.load(open(sys.argv[1]))['runtimes']
+          present = any(r.get('isAvailable') and '.iOS-' in r['identifier']
+                        and r['version'].split('.')[:2] == ['27', '2']
+                        and sys.argv[2] in {d['identifier'] for d in r.get('supportedDeviceTypes', [])}
+                        for r in runtimes)
+          sys.exit(0 if present else 1)
+          PY
+          then
+            xcodebuild -downloadPlatform iOS -buildVersion 27.2 -architectureVariant arm64
+          fi
       - name: Real WebKit and lifecycle tests
         run: bash ios/scripts/test-webview.sh ios/build/WebViewCI
       - name: Generate an unpublished source preview

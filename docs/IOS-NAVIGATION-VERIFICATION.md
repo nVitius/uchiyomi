@@ -50,6 +50,10 @@ Focused `NativeNavigationTests` runs on iOS 27.2, 2026-11-04 UTC:
 
 These 12 cases retain the existing single-view/store/document, Servers/notices, immersive reading, resize, offline frontend and legacy fallback coverage. The full unrelated core/auth/browser suites were not repeated for this layout modifier. Before/after screenshots are local result attachments. The updated IPA still needs publication and confirmation on the physical Duo; earlier device results do not validate this correction.
 
+The first publication attempt, tag `ios-v0.1.0-beta.13` / build 1016, was blocked by hosted WebKit failures in [run 41784753056](https://github.com/nVitius/uchiyomi/actions/runs/41784753056). Attempt 1 exceeded the prepared-reader deadline and subsequently logged completion at 318 seconds; its timeout snapshot includes system I/O throttling. On the unchanged second attempt, that case passed, but automatic rollback did not finish within the fixture's wait while the simulator GPU process was unresponsive. All three navigation cases passed on both attempts. No release or feed update occurred. Diagnostics are retained in `ios/build/navigation-published-1016/failure*`.
+
+The next candidate pins hosted Xcode and the Duo runtime to 27.2, matching the local QA series, and installs the runtime when absent from the runner image. Test assertions, execution limits and the two required WebKit invocations are unchanged. Hosted verification of this toolchain adjustment is required before publication; these failures alone do not prove a specific WebKit defect.
+
 ## Reproduce
 
 Build the frontend first. Use the existing disposable browser fixture, with a distinct local image/network/port if another run is active:
