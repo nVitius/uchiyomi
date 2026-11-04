@@ -52,7 +52,11 @@ These 12 cases retain the existing single-view/store/document, Servers/notices, 
 
 The first publication attempt, tag `ios-v0.1.0-beta.13` / build 1016, was blocked by hosted WebKit failures in [run 41784753056](https://github.com/nVitius/uchiyomi/actions/runs/41784753056). Attempt 1 exceeded the prepared-reader deadline and subsequently logged completion at 318 seconds; its timeout snapshot includes system I/O throttling. On the unchanged second attempt, that case passed, but automatic rollback did not finish within the fixture's wait while the simulator GPU process was unresponsive. All three navigation cases passed on both attempts. No release or feed update occurred. Diagnostics are retained in `ios/build/navigation-published-1016/failure*`.
 
-The next candidate pins hosted Xcode and the Duo runtime to 27.2, matching the local QA series, and installs the runtime when absent from the runner image. Tag `ios-v0.1.0-beta.14` / build 1017 stopped before WebKit testing because requesting version `27.2` downloaded the standard `24B114` runtime without Duo support. The workflow now requests the specific Duo build `24B91016s`; that exact download command was verified locally. Test assertions, execution limits and the two required WebKit invocations are unchanged. Hosted verification of this toolchain adjustment is required before publication; the earlier failures alone do not prove a specific WebKit defect.
+The next candidate pins hosted Xcode and the Duo runtime to 27.2, matching the local QA series, and installs the runtime when absent from the runner image. Tag `ios-v0.1.0-beta.14` / build 1017 stopped before WebKit testing because requesting version `27.2` downloaded the standard `24B114` runtime without Duo support. The workflow now requests the specific Duo build `24B91016s`; that exact download command was verified locally.
+
+Tag `ios-v0.1.0-beta.15` / build 1018 successfully installed the Duo runtime. Its hosted update and prepared-reader cases passed, but the subsequent two-server fixture exceeded five minutes. The timeout snapshot again shows the WebKit networking process in kernel I/O throttling. The full local suite on the corrected code passed 12 main cases and the separate authentication case (`ios/build/navigation-runtime-local-retry/`); its initial local attempt encountered an occupied random fixture port. These results suggest simulator/fixture interaction but do not establish the underlying WebKit cause.
+
+The runner now extends the existing authentication isolation to each of the three cache fixtures, retaining the main navigation/lifecycle and authentication invocations. All five invocations must pass. Assertions and time limits are unchanged, and CI preserves all result bundles. The revised runner passed locally: 9 main cases, each of the three cache cases, and authentication (13 passed total; one opt-in installation skip). Evidence: `ios/build/navigation-isolated-cache/summary.json`. Hosted verification remains required before publication.
 
 ## Reproduce
 
@@ -72,7 +76,7 @@ bash ios/scripts/test-auth.sh
 UCHI_SIMULATOR_ID=<test-device-uuid> bash ios/scripts/test-webview.sh ios/build/navigation-check
 ```
 
-The WebKit script deliberately runs authentication in a separate test-host invocation. Both result bundles must pass. Its opt-in installation fixture does not replace a physical in-place-update test.
+The WebKit script runs its three cache fixtures and authentication in separate test-host invocations from the navigation/lifecycle group. All five result bundles must pass. Its opt-in installation fixture does not replace a physical in-place-update test.
 
 ## Candidate artifacts and release boundary
 
