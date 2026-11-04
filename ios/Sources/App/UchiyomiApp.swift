@@ -72,38 +72,20 @@ struct ReaderView: View {
                 if model.progress != nil {
                     ReaderLoadingView(model: model)
                 } else if let webView = model.webView {
-                    ReaderWebView(view: webView, model: model).id(ObjectIdentifier(webView))
-                        // The system tab container must reach the display edge to join
-                        // the adaptive vertical bar. Its own guides inset web content.
-                        // Keep vertical insets for the toolbar and native notices.
-                        .ignoresSafeArea(.container, edges: .horizontal)
+                    if #available(iOS 27.1, *) {
+                        ReaderAdaptiveViewport(view: webView, model: model).id(ObjectIdentifier(webView))
+                    } else {
+                        ReaderWebView(view: webView, model: model).id(ObjectIdentifier(webView))
+                            .ignoresSafeArea(.container, edges: .horizontal)
+                    }
                 } else {
                     ServerConnectionView(model: model)
                 }
             }
             .navigationTitle("")
-            .toolbar(model.webView == nil ? .hidden : .visible, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                if model.webView != nil {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Menu {
-                            if let navigation = model.navigation {
-                                ForEach(navigation.secondary) { item in
-                                    Button(item.label, systemImage: item.id.symbol) { model.navigationBridge?.request(item.id) }
-                                        .disabled(!item.enabled)
-                                }
-                            }
-                            Section(model.serverName) {
-                                Button("Servers", systemImage: "server.rack") { model.showingServers = true }
-                                Button("Reload", systemImage: "arrow.clockwise") { Task { await model.reload() } }
-                            }
-                        } label: { Image(systemName: "ellipsis.circle") }
-                        .disabled(model.busy).accessibilityLabel("Reader menu")
-                    }
-                }
-            }
-            .safeAreaInset(edge: .bottom) {
+            .modifier(ReaderToolbar(model: model))
+            .safeAreaInset(edge: .bottom, spacing: 0) {
                 if model.webView != nil && (model.awaitingConfirmation || model.status != nil || model.error != nil) {
                     VStack(spacing: 10) {
                         if model.awaitingConfirmation {
@@ -136,6 +118,92 @@ struct ReaderView: View {
             .navigationDestination(isPresented: $model.showingServers) { ServerManagementView(model: model) }
         }
         .tint(ReaderTheme.accent).preferredColorScheme(.dark)
+    }
+}
+
+private struct ReaderMenu: View {
+    @ObservedObject var model: ReaderModel
+    var body: some View {
+        Menu {
+            if let navigation = model.navigation {
+                ForEach(navigation.secondary) { item in
+                    Button(item.label, systemImage: item.id.symbol) { model.navigationBridge?.request(item.id) }
+                        .disabled(!item.enabled)
+                }
+            }
+            Section(model.serverName) {
+                Button("Servers", systemImage: "server.rack") { model.showingServers = true }
+                Button("Reload", systemImage: "arrow.clockwise") { Task { await model.reload() } }
+            }
+        } label: { Label("Reader menu", systemImage: "ellipsis") }
+        .tint(ReaderTheme.foreground)
+        .disabled(model.busy).accessibilityLabel("Reader menu").accessibilityIdentifier("reader-menu")
+    }
+}
+
+private struct ReaderToolbar: ViewModifier {
+    @ObservedObject var model: ReaderModel
+    func body(content: Content) -> some View {
+        if #available(iOS 27.1, *) {
+            content.modifier(ReaderAdaptiveToolbar(model: model))
+        } else {
+            content.toolbar(model.webView == nil ? .hidden : .visible, for: .navigationBar)
+                .toolbar {
+                    if model.webView != nil {
+                        ToolbarItem(placement: .topBarTrailing) { ReaderMenu(model: model) }
+                    }
+                }
+        }
+    }
+}
+
+@available(iOS 27.1, *)
+private struct ReaderAdaptiveToolbar: ViewModifier {
+    @ObservedObject var model: ReaderModel
+    @Environment(\.toolbarVerticalEdge) private var edge
+    func body(content: Content) -> some View {
+        content.toolbar(model.webView == nil || edge != nil ? .hidden : .visible, for: .navigationBar)
+            .toolbar {
+                if model.webView != nil {
+                    if edge != nil {
+                        // One system group keeps the menu adjacent to the destinations.
+                        // iOS owns the edge, spacing and overflow as available space changes.
+                        ToolbarItemGroup(placement: .bottomBar) {
+                            if let navigation = model.navigation, navigation.showsTabs, model.progress == nil {
+                                ForEach(navigation.items, id: \.id) { item in
+                                    Button {
+                                        guard let action = ReaderNavigationAction(rawValue: item.id.rawValue) else { return }
+                                        model.navigationBridge?.request(action)
+                                    } label: { Label(item.label, systemImage: item.id.symbol) }
+                                    .tint(navigation.selected == item.id ? ReaderTheme.accent : ReaderTheme.foreground)
+                                    .disabled(model.busy || !item.enabled)
+                                    .badge(item.badge.map { Text($0) })
+                                    .accessibilityIdentifier("destination-\(item.id.rawValue)")
+                                    .accessibilityValue(item.status ?? "")
+                                    .accessibilityAddTraits(navigation.selected == item.id ? .isSelected : [])
+                                }
+                            }
+                            ReaderMenu(model: model)
+                        }
+                    } else {
+                        ToolbarItem(placement: .topBarTrailing) { ReaderMenu(model: model) }
+                    }
+                }
+            }
+    }
+}
+
+@available(iOS 27.1, *)
+private struct ReaderAdaptiveViewport: View {
+    let view: WKWebView
+    @ObservedObject var model: ReaderModel
+    @Environment(\.toolbarVerticalEdge) private var edge
+    private var hasNotice: Bool { model.awaitingConfirmation || model.status != nil || model.error != nil }
+    var body: some View {
+        ReaderWebView(view: view, model: model, usesToolbar: edge != nil)
+            // The UIKit safe-area guide protects content beside the vertical bar.
+            // Don't also reserve empty top/bottom bars; keep notice insets when shown.
+            .ignoresSafeArea(.container, edges: edge != nil && !hasNotice ? .all : .horizontal)
     }
 }
 
@@ -300,6 +368,7 @@ private struct ServerConnectionView: View {
 private struct ReaderWebView: UIViewControllerRepresentable {
     let view: WKWebView
     @ObservedObject var model: ReaderModel
+    var usesToolbar = false
     func makeCoordinator() -> Coordinator { Coordinator(model: model) }
     func makeUIViewController(context: Context) -> ReaderNavigationController {
         view.navigationDelegate = context.coordinator
@@ -313,7 +382,7 @@ private struct ReaderWebView: UIViewControllerRepresentable {
     }
     func updateUIViewController(_ controller: ReaderNavigationController, context: Context) {
         let state = model.navigation
-        controller.update(items: state?.items ?? [], selected: state?.selected ?? .home, visible: state?.showsTabs == true)
+        controller.update(items: state?.items ?? [], selected: state?.selected ?? .home, visible: state?.showsTabs == true && !usesToolbar)
     }
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         let model: ReaderModel

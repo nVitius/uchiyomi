@@ -5,12 +5,12 @@ import WebKit
 
 @MainActor
 final class NativeNavigationTests: XCTestCase {
-    private func waitFor(_ condition: () async throws -> Bool) async throws {
+    private func waitFor(file: StaticString = #filePath, line: UInt = #line, _ condition: () async throws -> Bool) async throws {
         for _ in 0..<300 {
             if try await condition() { return }
             try await Task.sleep(nanoseconds: 30_000_000)
         }
-        XCTFail("Navigation condition did not settle")
+        XCTFail("Navigation condition did not settle", file: file, line: line)
         throw ClientError.invalid("Navigation condition did not settle")
     }
 
@@ -40,7 +40,18 @@ final class NativeNavigationTests: XCTestCase {
                 return parent.children.lazy.compactMap(findContainer).first
             }
             let container = try XCTUnwrap(findContainer(window.rootViewController!))
-            try await waitFor { container.showsNavigation }
+            let vertical: Bool
+            if #available(iOS 27.1, *) { vertical = window.traitCollection.verticalBarEdge != .unspecified }
+            else { vertical = false }
+            func control(_ id: String, in view: UIView) -> UIView? {
+                guard !view.isHidden, view.alpha > 0 else { return nil }
+                if view.accessibilityIdentifier == id { return view }
+                for child in view.subviews {
+                    if let result = control(id, in: child) { return result }
+                }
+                return nil
+            }
+            try await waitFor { vertical ? control("destination-home", in: window) != nil : container.showsNavigation }
             let web = try XCTUnwrap(model.webView)
             let store = web.configuration.websiteDataStore
             let token = try await web.evaluateJavaScript("uchiyomiNative.navigation.documentID") as? String
@@ -71,23 +82,43 @@ final class NativeNavigationTests: XCTestCase {
             _ = try await web.evaluateJavaScript("fixture.state.immersive=true; fixture.message.revision++; uchiyomiNative.navigation.send(fixture.message); true")
             try await waitFor { model.navigation?.immersive == true }
             try await waitFor { !container.showsNavigation }
+            if vertical {
+                try await waitFor { control("reader-menu", in: window) != nil }
+                try await waitFor { control("destination-home", in: window) == nil }
+            }
+            // The horizontal SwiftUI navigation bar draws its menu without a
+            // corresponding identified UIView; keep a visual check for that pose.
+            try await Task.sleep(nanoseconds: 350_000_000)
+            let immersive = XCTAttachment(image: window.screen.screenshotForTest(window: window))
+            immersive.name = "Reader menu while immersive"; immersive.lifetime = .keepAlways; add(immersive)
             _ = try await web.evaluateJavaScript("fixture.state.immersive=false; fixture.message.revision++; uchiyomiNative.navigation.send(fixture.message); true")
             try await waitFor { model.navigation?.immersive == false }
-            try await waitFor { container.showsNavigation }
+            try await waitFor { vertical ? control("destination-home", in: window) != nil : container.showsNavigation }
             try await Task.sleep(nanoseconds: 350_000_000)
             XCTAssertTrue(web.window === window)
             let bar = container.tabs.tabBar.convert(container.tabs.tabBar.bounds, to: window)
             let content = web.convert(web.bounds, to: window)
-            if #available(iOS 27.1, *), window.traitCollection.verticalBarEdge != .unspecified {
-                // A tab controller inset by the outer SwiftUI navigation stack can
-                // stay horizontal even while the host menu moves to the side.
-                XCTAssertGreaterThan(bar.height, bar.width, "Primary tabs must join the system's vertical bar")
-                XCTAssertLessThanOrEqual(min(abs(bar.minX), abs(window.bounds.maxX - bar.maxX)), 1,
-                                         "The native tab container must reach the display edge")
+            if vertical {
+                XCTAssertFalse(container.showsNavigation, "Do not duplicate the vertical toolbar with native tabs")
+                var previous: CGRect?
+                for id in ReaderDestination.allCases.map({ "destination-\($0.rawValue)" }) + ["reader-menu"] {
+                    let button = try XCTUnwrap(control(id, in: window), "Missing native action \(id)")
+                    let frame = button.convert(button.bounds, to: window)
+                    XCTAssertFalse(content.insetBy(dx: 1, dy: 1).intersects(frame), "Native action overlaps web content")
+                    if let previous {
+                        XCTAssertEqual(frame.midX, previous.midX, accuracy: 1, "Keep all actions on the same vertical axis")
+                        XCTAssertGreaterThan(frame.midY, previous.midY, "Menu must follow the primary destinations")
+                        XCTAssertLessThanOrEqual(frame.midY - previous.midY, max(frame.height, previous.height) * 1.5,
+                                                "Do not separate the menu from the primary group with a large gap")
+                    }
+                    previous = frame
+                }
+                XCTAssertGreaterThanOrEqual(content.maxY, window.safeAreaLayoutGuide.layoutFrame.maxY - 1,
+                                            "Do not reserve an empty horizontal bar below the web content")
             } else {
                 XCTAssertGreaterThan(bar.width, bar.height, "Keep ordinary horizontal tabs when no vertical bar is available")
+                XCTAssertFalse(content.insetBy(dx: 1, dy: 1).intersects(bar), "Native tabs overlap web content")
             }
-            XCTAssertFalse(content.insetBy(dx: 1, dy: 1).intersects(bar), "Native tabs overlap web content")
             let screenshot = XCTAttachment(image: window.screen.screenshotForTest(window: window))
             screenshot.name = "Reader screen with native navigation"; screenshot.lifetime = .keepAlways; add(screenshot)
 
@@ -101,7 +132,11 @@ final class NativeNavigationTests: XCTestCase {
             try await Task.sleep(nanoseconds: 100_000_000)
             XCTAssertEqual(model.navigation?.selected, .home, "The previous server altered current navigation")
             await model.addServer()
-        } catch { await model.addServer(); throw error }
+        } catch {
+            let screenshot = XCTAttachment(image: window.screen.screenshotForTest(window: window))
+            screenshot.name = "Reader navigation failure"; screenshot.lifetime = .keepAlways; add(screenshot)
+            await model.addServer(); throw error
+        }
     }
 
     func testRealFrontendNegotiatesOfflineReadingAndLegacyFallback() async throws {

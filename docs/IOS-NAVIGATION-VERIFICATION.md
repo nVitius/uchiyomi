@@ -1,6 +1,23 @@
 # Native navigation experiment verification
 
-Verification through 2026-11-04 UTC. The matching backend/frontend is deployed to the private test server. Hosted native build 1019, including the adaptive-bar correction, is published to the existing AltStore test channel. Physical-device acceptance of this correction remains pending. Local candidates numbered 1016 remain unpublished. The protocol and remaining device checklist are in [HOST-NAVIGATION.md](HOST-NAVIGATION.md).
+Verification through 2026-11-04. The matching backend/frontend is deployed to the private test server. Hosted native build 1019, including the adaptive-bar correction, is published to the existing AltStore test channel. The user's follow-up screenshot confirms individual side-dock icons, with a request to close the gap and move the secondary menu below them. That refinement is implemented locally and remains unpublished; its current coverage is recorded below. Full physical-device acceptance remains pending. Local candidates numbered 1016 remain unpublished. The protocol and remaining device checklist are in [HOST-NAVIGATION.md](HOST-NAVIGATION.md).
+
+## Contiguous dock refinement (unpublished)
+
+The primary actions and secondary menu now share one system toolbar group when `toolbarVerticalEdge` is present. The menu follows You and uses a plain white ellipsis. Horizontal layouts retain native tabs and More overflow. Primary actions hide during reading/loading; the same web view, store and bridge remain in use. The vertical viewport also removes the unused horizontal bar reserve while keeping UIKit's safe-area protection and native notice insets. This is a native-only change; it needs no frontend or server update.
+
+Final focused runs use the existing `NativeNavigationTests` suite, Debug, SDK 27.2 and deployment target 17:
+
+| Result bundle under `ios/build/` | Runtime / pose | Result |
+| --- | --- | --- |
+| `navigation-menu-complete-duo.xcresult` | Duo / iOS 27.2 (24B91016s), folded outer display, 466×678 | All 3 cases passed, zero failures. |
+| `navigation-menu-complete-phone.xcresult` | iPhone 18 Pro / iOS 27.2 (24B8117), portrait | All 3 cases passed, zero failures. |
+
+The full ReaderView test measures the primary actions and menu in order on the same vertical axis, bounds adjacent spacing, checks content clearance and the absence of an extra bottom reserve, and verifies menu availability while primary actions hide in the reader. Existing checks retain document/view/store/delegate identity through Servers, notices, resizing and profile replacement. The other two cases cover native tab/More ownership and the real offline frontend with legacy fallback.
+
+Exported attachments are local in the corresponding `*-attachments/` directories. Visual inspection confirms one continuous Duo dock ending in the white ellipsis, ordinary horizontal phone tabs, and the phone's menu during immersive reading. The horizontal SwiftUI navigation bar does not expose an identified menu UIView to the hosted test, so that menu check uses the captured image; vertical menu identity and geometry are asserted directly. Screenshots are not committed.
+
+The Mac was locked during this refinement, preventing Device Hub interaction to unfold or rotate the Duo simulator. Inner-display poses, folding transitions, large text, VoiceOver and physical-device acceptance remain unverified for this candidate. The earlier pose results below belong to build 1019's implementation and do not close those gaps. No release tag, feed or live server was changed.
 
 ## Source and compatibility
 
