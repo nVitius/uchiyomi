@@ -1,6 +1,6 @@
 # Native navigation experiment verification
 
-Verification through 2026-11-04 UTC. The matching backend/frontend is deployed to the private test server. Hosted native build 1015 is published to the private AltStore channel; physical-device acceptance remains pending. The adaptive-bar correction below is local and requires a new native release. Local candidates numbered 1016 remain unpublished. The protocol and remaining device checklist are in [HOST-NAVIGATION.md](HOST-NAVIGATION.md).
+Verification through 2026-11-04 UTC. The matching backend/frontend is deployed to the private test server. Hosted native build 1019, including the adaptive-bar correction, is published to the existing AltStore test channel. Physical-device acceptance of this correction remains pending. Local candidates numbered 1016 remain unpublished. The protocol and remaining device checklist are in [HOST-NAVIGATION.md](HOST-NAVIGATION.md).
 
 ## Source and compatibility
 
@@ -48,7 +48,7 @@ Focused `NativeNavigationTests` runs on iOS 27.2, 2026-11-04 UTC:
 | `navigation-icons-inner-portrait.xcresult` | 3 passed; screenshot shows horizontal tabs on the unfolded 669×951 display. |
 | `navigation-icons-phone.xcresult` | 3 passed on iPhone 18 Pro; ordinary tabs/More remain usable. |
 
-These 12 cases retain the existing single-view/store/document, Servers/notices, immersive reading, resize, offline frontend and legacy fallback coverage. The full unrelated core/auth/browser suites were not repeated for this layout modifier. Before/after screenshots are local result attachments. The updated IPA still needs publication and confirmation on the physical Duo; earlier device results do not validate this correction.
+These 12 cases retain the existing single-view/store/document, Servers/notices, immersive reading, resize, offline frontend and legacy fallback coverage. Before/after screenshots are local result attachments. The subsequent full local WebKit run and hosted release checks are recorded below; the full browser walk was not repeated for this native layout modifier. Build 1019 is published, but confirmation on the physical Duo remains pending; earlier device results do not validate this correction.
 
 The first publication attempt, tag `ios-v0.1.0-beta.13` / build 1016, was blocked by hosted WebKit failures in [run 41784753056](https://github.com/nVitius/uchiyomi/actions/runs/41784753056). Attempt 1 exceeded the prepared-reader deadline and subsequently logged completion at 318 seconds; its timeout snapshot includes system I/O throttling. On the unchanged second attempt, that case passed, but automatic rollback did not finish within the fixture's wait while the simulator GPU process was unresponsive. All three navigation cases passed on both attempts. No release or feed update occurred. Diagnostics are retained in `ios/build/navigation-published-1016/failure*`.
 
@@ -56,7 +56,7 @@ The next candidate pins hosted Xcode and the Duo runtime to 27.2, matching the l
 
 Tag `ios-v0.1.0-beta.15` / build 1018 successfully installed the Duo runtime. Its hosted update and prepared-reader cases passed, but the subsequent two-server fixture exceeded five minutes. The timeout snapshot again shows the WebKit networking process in kernel I/O throttling. The full local suite on the corrected code passed 12 main cases and the separate authentication case (`ios/build/navigation-runtime-local-retry/`); its initial local attempt encountered an occupied random fixture port. These results suggest simulator/fixture interaction but do not establish the underlying WebKit cause.
 
-The runner now extends the existing authentication isolation to each of the three cache fixtures, retaining the main navigation/lifecycle and authentication invocations. All five invocations must pass. Assertions and time limits are unchanged, and CI preserves all result bundles. The revised runner passed locally: 9 main cases, each of the three cache cases, and authentication (13 passed total; one opt-in installation skip). Evidence: `ios/build/navigation-isolated-cache/summary.json`. Hosted verification remains required before publication.
+The runner now extends the existing authentication isolation to each of the three cache fixtures, retaining the main navigation/lifecycle and authentication invocations. All five invocations must pass. Assertions and time limits are unchanged, and CI preserves all result bundles. The revised runner passed locally: 9 main cases, each of the three cache cases, and authentication (13 passed total; one opt-in installation skip). Evidence: `ios/build/navigation-isolated-cache/summary.json`. The subsequent hosted build 1019 passed all five invocations, as recorded below. Some hosted cases remained slow; this successful run does not establish that all simulator timing variability is resolved.
 
 ## Reproduce
 
@@ -85,6 +85,17 @@ Prepare a local AltStore candidate with `ios/scripts/package.sh`; it verifies th
 The server deployment and native beta publication are complete. Physical folding/rotation, keyboard, larger text, VoiceOver, in-place retention, offline reboot and subsequent sync remain open.
 
 ## Hosted beta publication
+
+### Adaptive-bar correction: build 1019
+
+- Published `0.1.0` (build `1019`), tag [`ios-v0.1.0-beta.16`](https://github.com/nVitius/uchiyomi/releases/tag/ios-v0.1.0-beta.16), from source `595aa158e8021fe3ee46169964e214b4cd4236c4`. The existing bundle and feed identity are preserved. This correction needs no server update.
+- [Actions run 41793498271](https://github.com/nVitius/uchiyomi/actions/runs/41793498271) passed build, release and source deployment. All 13 required WebKit cases passed across five invocations on the iOS 27.2 Duo runtime; the opt-in installation test was skipped. Assertions and execution limits were retained.
+- Independent public verification at 08:03:11 UTC on 2026-11-04 checked the IPA checksum, size, SDK, ad-hoc signature, empty entitlements, absent personal provisioning, exact source fingerprint and bundle identity. The AltStore feed advertises build 1019 and preserves every historical entry.
+- Earlier tags beta.13–beta.15 were blocked before publication. Their diagnostics and the locally verified CI adjustments are documented above. Physical installation, folding/accessibility and update retention of build 1019 remain pending.
+
+IPA SHA-256: `cf2f74af2ad623a3f064d94cadfcd6bd4fc4dccf03a0df6b2bf8a5b78c35f67b` (967,989 bytes), SDK `iphoneos27.2`. Evidence: `ios/build/navigation-published-1019/`.
+
+### Initial navigation experiment: build 1015
 
 - Published version `0.1.0` (build `1015`), tag `ios-v0.1.0-beta.12`, on the fork's existing AltStore source. CI assigns build numbers independently of the unpublished local candidate numbered 1016.
 - Release source `e8fd3803cf7cde9d8bae08bc9e5f166374e4c5d9` contains the verified implementation at `3f23729c` plus deployment documentation and the private channel's existing bundle identifier. The private identifier change is confined to `release/ios-native-navigation`; the feature branch retains the official identifier.
