@@ -162,13 +162,13 @@ private struct ReaderAdaptiveToolbar: ViewModifier {
     @ObservedObject var model: ReaderModel
     @Environment(\.toolbarVerticalEdge) private var edge
     func body(content: Content) -> some View {
-        content.toolbar(model.webView == nil || edge != nil ? .hidden : .visible, for: .navigationBar)
+        content.toolbar(model.webView == nil ? .hidden : .visible, for: .navigationBar)
             .toolbar {
                 if model.webView != nil {
                     if edge != nil {
-                        // One system group keeps the menu adjacent to the destinations.
+                        // Keep the whole group at the top, with the menu last.
                         // iOS owns the edge, spacing and overflow as available space changes.
-                        ToolbarItemGroup(placement: .bottomBar) {
+                        ToolbarItemGroup(placement: .topBarTrailing) {
                             if let navigation = model.navigation, navigation.showsTabs, model.progress == nil {
                                 ForEach(navigation.items, id: \.id) { item in
                                     Button {

@@ -91,6 +91,12 @@ final class NativeNavigationTests: XCTestCase {
             try await Task.sleep(nanoseconds: 350_000_000)
             let immersive = XCTAttachment(image: window.screen.screenshotForTest(window: window))
             immersive.name = "Reader menu while immersive"; immersive.lifetime = .keepAlways; add(immersive)
+            let topAnchor: CGFloat?
+            if vertical {
+                let menu = try XCTUnwrap(control("reader-menu", in: window))
+                topAnchor = menu.convert(menu.bounds, to: window).minY
+                XCTAssertLessThan(try XCTUnwrap(topAnchor), window.bounds.midY, "Keep the menu at the top while reading")
+            } else { topAnchor = nil }
             _ = try await web.evaluateJavaScript("fixture.state.immersive=false; fixture.message.revision++; uchiyomiNative.navigation.send(fixture.message); true")
             try await waitFor { model.navigation?.immersive == false }
             try await waitFor { vertical ? control("destination-home", in: window) != nil : container.showsNavigation }
@@ -100,10 +106,12 @@ final class NativeNavigationTests: XCTestCase {
             let content = web.convert(web.bounds, to: window)
             if vertical {
                 XCTAssertFalse(container.showsNavigation, "Do not duplicate the vertical toolbar with native tabs")
+                var first: CGRect?
                 var previous: CGRect?
                 for id in ReaderDestination.allCases.map({ "destination-\($0.rawValue)" }) + ["reader-menu"] {
                     let button = try XCTUnwrap(control(id, in: window), "Missing native action \(id)")
                     let frame = button.convert(button.bounds, to: window)
+                    if first == nil { first = frame }
                     XCTAssertFalse(content.insetBy(dx: 1, dy: 1).intersects(frame), "Native action overlaps web content")
                     if let previous {
                         XCTAssertEqual(frame.midX, previous.midX, accuracy: 1, "Keep all actions on the same vertical axis")
@@ -113,6 +121,10 @@ final class NativeNavigationTests: XCTestCase {
                     }
                     previous = frame
                 }
+                // Compare against the menu-only top anchor: the system status
+                // region is not part of the window's ordinary safe-area inset.
+                XCTAssertEqual(try XCTUnwrap(first).minY, try XCTUnwrap(topAnchor), accuracy: 1,
+                               "Grow the group downward from its top anchor when primary actions return")
                 XCTAssertGreaterThanOrEqual(content.maxY, window.safeAreaLayoutGuide.layoutFrame.maxY - 1,
                                             "Do not reserve an empty horizontal bar below the web content")
             } else {
