@@ -43,19 +43,39 @@ final class NativeNavigationTests: XCTestCase {
             let vertical: Bool
             if #available(iOS 27.1, *) { vertical = window.traitCollection.verticalBarEdge != .unspecified }
             else { vertical = false }
-            func control(_ id: String, in view: UIView) -> UIView? {
-                guard !view.isHidden, view.alpha > 0 else { return nil }
-                if view.accessibilityIdentifier == id { return view }
-                for child in view.subviews {
-                    if let result = control(id, in: child) { return result }
+            // Fresh simulators may omit accessibility IDs on rendered toolbar
+            // views. Inspect public controls and verify their destinations by action.
+            func nativeButtons() -> [UIControl] {
+                func collect(_ view: UIView) -> [UIControl] {
+                    guard !view.isHidden, view.alpha > 0, !(view is WKWebView) else { return [] }
+                    if let button = view as? UIControl, !button.bounds.isEmpty { return [button] }
+                    return view.subviews.flatMap(collect)
                 }
-                return nil
+                return collect(window).sorted {
+                    $0.convert($0.bounds, to: window).midY < $1.convert($1.bounds, to: window).midY
+                }
             }
-            try await waitFor { vertical ? control("destination-home", in: window) != nil : container.showsNavigation }
+            try await waitFor { vertical ? nativeButtons().count == 7 : container.showsNavigation }
             let web = try XCTUnwrap(model.webView)
             let store = web.configuration.websiteDataStore
             let token = try await web.evaluateJavaScript("uchiyomiNative.navigation.documentID") as? String
             let delegate = web.navigationDelegate
+            if vertical {
+                for (index, destination) in ReaderDestination.allCases.enumerated() {
+                    let button = nativeButtons()[index]
+                    let previous = try await web.evaluateJavaScript("fixture.actions.length") as? Int
+                    let event: UIControl.Event = button.allControlEvents.contains(.primaryActionTriggered) ? .primaryActionTriggered : .touchUpInside
+                    print("Navigation milestone: native action \(destination.rawValue)")
+                    button.sendActions(for: event)
+                    try await waitFor {
+                        let count = (try? await web.evaluateJavaScript("fixture.actions.length")) as? Int
+                        return count == (previous ?? 0) + 1 && model.navigation?.selected == destination
+                    }
+                    let action = try await web.evaluateJavaScript("fixture.actions.at(-1)") as? String
+                    XCTAssertEqual(action, destination.rawValue, "Native destinations are out of order")
+                    XCTAssertEqual(model.navigation?.selected, destination)
+                }
+            }
             model.navigationBridge?.request(.library)
             try await waitFor { model.navigation?.selected == .library && container.selected == .library }
             for size in [CGSize(width: 390, height: 844), CGSize(width: 844, height: 390), scene.coordinateSpace.bounds.size] {
@@ -82,24 +102,19 @@ final class NativeNavigationTests: XCTestCase {
             _ = try await web.evaluateJavaScript("fixture.state.immersive=true; fixture.message.revision++; uchiyomiNative.navigation.send(fixture.message); true")
             try await waitFor { model.navigation?.immersive == true }
             try await waitFor { !container.showsNavigation }
-            if vertical {
-                try await waitFor { control("reader-menu", in: window) != nil }
-                try await waitFor { control("destination-home", in: window) == nil }
-            }
-            // The horizontal SwiftUI navigation bar draws its menu without a
-            // corresponding identified UIView; keep a visual check for that pose.
+            try await waitFor { nativeButtons().count == 1 }
             try await Task.sleep(nanoseconds: 350_000_000)
             let immersive = XCTAttachment(image: window.screen.screenshotForTest(window: window))
             immersive.name = "Reader menu while immersive"; immersive.lifetime = .keepAlways; add(immersive)
             let topAnchor: CGFloat?
             if vertical {
-                let menu = try XCTUnwrap(control("reader-menu", in: window))
-                topAnchor = menu.convert(menu.bounds, to: window).minY
+                let menu = try XCTUnwrap(nativeButtons().first)
+                topAnchor = menu.convert(menu.bounds, to: window).midY
                 XCTAssertLessThan(try XCTUnwrap(topAnchor), window.bounds.midY, "Keep the menu at the top while reading")
             } else { topAnchor = nil }
             _ = try await web.evaluateJavaScript("fixture.state.immersive=false; fixture.message.revision++; uchiyomiNative.navigation.send(fixture.message); true")
             try await waitFor { model.navigation?.immersive == false }
-            try await waitFor { vertical ? control("destination-home", in: window) != nil : container.showsNavigation }
+            try await waitFor { vertical ? nativeButtons().count == 7 : container.showsNavigation }
             try await Task.sleep(nanoseconds: 350_000_000)
             XCTAssertTrue(web.window === window)
             let bar = container.tabs.tabBar.convert(container.tabs.tabBar.bounds, to: window)
@@ -108,8 +123,9 @@ final class NativeNavigationTests: XCTestCase {
                 XCTAssertFalse(container.showsNavigation, "Do not duplicate the vertical toolbar with native tabs")
                 var first: CGRect?
                 var previous: CGRect?
-                for id in ReaderDestination.allCases.map({ "destination-\($0.rawValue)" }) + ["reader-menu"] {
-                    let button = try XCTUnwrap(control(id, in: window), "Missing native action \(id)")
+                let buttons = nativeButtons()
+                XCTAssertEqual(buttons.count, 7, "Keep six destinations followed by the menu")
+                for button in buttons {
                     let frame = button.convert(button.bounds, to: window)
                     if first == nil { first = frame }
                     XCTAssertFalse(content.insetBy(dx: 1, dy: 1).intersects(frame), "Native action overlaps web content")
@@ -123,7 +139,7 @@ final class NativeNavigationTests: XCTestCase {
                 }
                 // Compare against the menu-only top anchor: the system status
                 // region is not part of the window's ordinary safe-area inset.
-                XCTAssertEqual(try XCTUnwrap(first).minY, try XCTUnwrap(topAnchor), accuracy: 1,
+                XCTAssertEqual(try XCTUnwrap(first).midY, try XCTUnwrap(topAnchor), accuracy: 1,
                                "Grow the group downward from its top anchor when primary actions return")
                 XCTAssertGreaterThanOrEqual(content.maxY, window.safeAreaLayoutGuide.layoutFrame.maxY - 1,
                                             "Do not reserve an empty horizontal bar below the web content")
@@ -189,6 +205,7 @@ final class NativeNavigationTests: XCTestCase {
             bridge.request(.home)
             try await Task.sleep(nanoseconds: 100_000_000)
             XCTAssertEqual(web.url, offlineURL)
+            try await waitFor { (try? await web.evaluateJavaScript("document.querySelector('a[href*=\"/reader/\"]') !== null")) as? Bool == true }
             _ = try await web.evaluateJavaScript("document.querySelector('a[href*=\"/reader/\"]').click()")
             try await waitFor { bridge.presentation?.immersive == true }
             XCTAssertFalse(container!.showsNavigation)
