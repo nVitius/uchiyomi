@@ -6,6 +6,7 @@ on:
       - 'ios/**'
       - 'web/**'
       - '.github/workflows/ios-release.yml'
+      - '.github/actionlint.yaml'
   push:
     tags: ['ios-v*']
   workflow_dispatch:
@@ -44,10 +45,12 @@ jobs:
       - name: Verify toolchain and distribution rules
         run: |
           xcodebuild -version
-          python3 -m unittest discover -s ios/Tests/Distribution -v
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s ios/Tests/Distribution -v
           node --test ios/scripts/manifest.test.mjs
-      - name: Native core tests
-        run: bash ios/scripts/test-core.sh
+      - name: Native core and transport tests
+        run: |
+          bash ios/scripts/test-core.sh
+          bash ios/scripts/test-transport.sh
       - name: Package without Apple credentials
         env:
           UCHI_PACKAGE_MODE: altstore
@@ -125,8 +128,10 @@ jobs:
           retention-days: 7
 
   release:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/ios-v')
+    # Source publication alone does not authorize public binary distribution.
+    if: vars.IOS_RELEASE_PUBLISH == 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/ios-v')
     needs: build
+    environment: ios-release
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -147,6 +152,8 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: python3 ios/scripts/publish-release.py --directory ios/build/publish --repository "$REPOSITORY" --tag "$TAG"
 
+  # This deploys the whole Pages site. Keep it disabled if another workflow owns
+  # Pages; combine the source directory with that site before its single deployment.
   source:
     if: vars.IOS_ALTSTORE_PUBLISH == 'true'
     needs: release
