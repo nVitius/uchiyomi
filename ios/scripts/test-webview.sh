@@ -46,7 +46,6 @@ fi
 build_args=(-project ios/Uchiyomi.xcodeproj -scheme Uchiyomi -configuration Debug
   -destination "platform=iOS Simulator,id=$simulator"
   -derivedDataPath "$output/DerivedData"
-  -parallel-testing-enabled NO
   -test-timeouts-enabled YES -default-test-execution-time-allowance 300 -maximum-test-execution-time-allowance 600
   ONLY_ACTIVE_ARCH=YES
   DEVELOPMENT_TEAM= CODE_SIGN_IDENTITY=- PRODUCT_BUNDLE_IDENTIFIER=org.uchiyomi.ci
