@@ -14,7 +14,8 @@ permissions:
 
 concurrency:
   group: ios-ci-experiment-${{ github.ref }}
-  cancel-in-progress: false
+  # Proposed production rule; manual experiment runs remain non-cancelled.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
